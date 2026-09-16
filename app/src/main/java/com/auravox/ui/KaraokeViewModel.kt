@@ -106,8 +106,16 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
      */
     val heardMs: Double get() = songPositionMs - outputLatencyMs
 
-    /** Song time the loaded file begins at. Non-zero when playing a take. */
-    val sourceStartMs: Double get() = activeTake?.startSongMs ?: 0.0
+    /**
+     * Song time the loaded file begins at. Non-zero when playing a take.
+     *
+     * This tracks the file actually open, not the take object: recording a new
+     * layer replaces the take while the decoder is still on the old mix, and
+     * reading the offset off the new one would shift every seek by a round
+     * trip.
+     */
+    var sourceStartMs = 0.0
+        private set
 
     /**
      * Song length in ms. The container knows it as soon as the file opens, so
@@ -274,9 +282,8 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         current = song
         activeTake = null
         stageMode = StageMode.SING
-        NativeAudio.setSongOffsetMs(0.0)
         set(Param.MONITOR_VOICE, 1f)
-        loadSource(Uri.parse(song.uri), song)
+        loadSource(Uri.parse(song.uri), song, 0.0)
     }
 
     /** Stacks a new voice on top of a take. The take's mix becomes the base. */
@@ -295,8 +302,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         // the track and stop lining up with the melody
         write(Param.TRACK_TEMPO, 1f)
         set(Param.MONITOR_VOICE, 1f)
-        NativeAudio.setSongOffsetMs(take.startSongMs)
-        loadSource(Uri.fromFile(File(take.path)), song)
+        loadSource(Uri.fromFile(File(take.path)), song, take.startSongMs)
     }
 
     /** Listens back without the microphone in the way. */
@@ -316,13 +322,14 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         activeTake = take
         stageMode = StageMode.PLAYBACK
         set(Param.MONITOR_VOICE, 0f)
-        NativeAudio.setSongOffsetMs(take.startSongMs)
-        loadSource(Uri.fromFile(File(take.path)), song)
+        loadSource(Uri.fromFile(File(take.path)), song, take.startSongMs)
         startPlayback()
     }
 
-    private fun loadSource(uri: Uri, song: Song?) {
+    private fun loadSource(uri: Uri, song: Song?, startSongMs: Double) {
         screen = Screen.STAGE
+        sourceStartMs = startSongMs
+        NativeAudio.setSongOffsetMs(startSongMs)
         trail.clear()
         trailVersion = trail.version
 
@@ -393,8 +400,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         if (decoder.sampleRate <= 0) return
         // The source can start before the song does, so song time is shifted
         // back into file time before seeking
-        val offset = activeTake?.startSongMs ?: 0.0
-        val fileMs = (ms - offset).coerceAtLeast(0.0)
+        val fileMs = (ms - sourceStartMs).coerceAtLeast(0.0)
         val last = maxOf(0L, decoder.totalFrames - 1)
         val frame = ((fileMs * decoder.sampleRate) / 1000.0).toLong().coerceIn(0L, last)
         decoder.seek(frame)
