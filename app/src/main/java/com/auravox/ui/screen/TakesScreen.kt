@@ -47,7 +47,7 @@ import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TakesScreen(vm: KaraokeViewModel) {
+fun TakesScreen(vm: KaraokeViewModel, onNeedMic: (() -> Unit) -> Unit) {
     val stamp = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault())
 
     Scaffold(
@@ -89,14 +89,19 @@ fun TakesScreen(vm: KaraokeViewModel) {
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(vm.takes, key = { it.id }) { take ->
-                TakeCard(vm, take, stamp.format(Date(take.recordedAt)))
+                TakeCard(vm, take, stamp.format(Date(take.recordedAt)), onNeedMic)
             }
         }
     }
 }
 
 @Composable
-private fun TakeCard(vm: KaraokeViewModel, take: Take, when_: String) {
+private fun TakeCard(
+    vm: KaraokeViewModel,
+    take: Take,
+    when_: String,
+    onNeedMic: (() -> Unit) -> Unit
+) {
     val context = LocalContext.current
 
     Column(
@@ -131,7 +136,7 @@ private fun TakeCard(vm: KaraokeViewModel, take: Take, when_: String) {
                     color = Aura.Dim
                 )
             }
-            IconButton(onClick = { vm.playTake(take) }) {
+            IconButton(onClick = { onNeedMic { vm.playTake(take) } }) {
                 Icon(Icons.Filled.PlayArrow, contentDescription = "Ouvir", tint = Aura.Teal)
             }
         }
@@ -141,7 +146,7 @@ private fun TakeCard(vm: KaraokeViewModel, take: Take, when_: String) {
             horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TextButton(onClick = { vm.overdub(take) }) {
+            TextButton(onClick = { onNeedMic { vm.overdub(take) } }) {
                 Icon(Icons.Filled.LibraryAdd, contentDescription = null, tint = Aura.Violet)
                 Text("  Nova camada", style = MaterialTheme.typography.labelSmall)
             }

@@ -31,7 +31,7 @@ fun AuraVoxApp(vm: KaraokeViewModel, onNeedMic: (() -> Unit) -> Unit) {
             KaraokeViewModel.Screen.LIBRARY -> LibraryScreen(vm, onNeedMic)
             KaraokeViewModel.Screen.STAGE -> StageScreen(vm)
             KaraokeViewModel.Screen.RESULT -> ResultScreen(vm)
-            KaraokeViewModel.Screen.TAKES -> TakesScreen(vm)
+            KaraokeViewModel.Screen.TAKES -> TakesScreen(vm, onNeedMic)
         }
 
         if (vm.showMixer) {
