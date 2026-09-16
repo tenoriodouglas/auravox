@@ -165,6 +165,9 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     /** Mirror of the native parameter values, so sliders have something to read. */
     private val params = mutableStateMapOf<Int, Float>()
 
+    /** Set when the app muted the monitor itself, so it knows to put it back. */
+    private var monitorMutedForBluetooth = false
+
     private var pendingMixPath: String? = null
     private var pendingStemPath: String? = null
     private var recordStartSongMs = 0.0
@@ -237,13 +240,22 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
                     selectedMic = option
                     // Over Bluetooth the round trip is 150 to 300 ms: hearing
                     // yourself that late is worse than not hearing yourself
-                    write(Param.MONITOR_VOICE, 0f)
+                    if (monitorOn) {
+                        write(Param.MONITOR_VOICE, 0f)
+                        monitorMutedForBluetooth = true
+                    }
                     message = "Microfone Bluetooth ativo. O monitor foi desligado — " +
                         "o atraso do Bluetooth torna impossível cantar se ouvindo."
                 }
             } else {
                 withContext(Dispatchers.IO) { AudioDevices.disableBluetooth(getApplication()) }
                 selectedMic = option
+                // Leaving Bluetooth: give back the monitor this code took away,
+                // but never override a singer who chose to turn it off
+                if (monitorMutedForBluetooth) {
+                    write(Param.MONITOR_VOICE, 1f)
+                    monitorMutedForBluetooth = false
+                }
             }
 
             if (wasRunning && startEngine() && screen == Screen.STAGE) reloadStage()
@@ -631,7 +643,9 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun toggleMonitor() {
-        set(Param.MONITOR_VOICE, if (get(Param.MONITOR_VOICE) > 0.5f) 0f else 1f)
+        // A deliberate choice outranks the automatic Bluetooth mute
+        monitorMutedForBluetooth = false
+        set(Param.MONITOR_VOICE, if (monitorOn) 0f else 1f)
     }
 
     val monitorOn: Boolean get() = get(Param.MONITOR_VOICE) > 0.5f
