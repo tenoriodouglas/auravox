@@ -198,16 +198,18 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream * /*stream*
 }
 
 void AudioEngine::updateLatency() {
-    float total = 0.0f;
+    float total = 0.0f, outOnly = 0.0f;
     if (input_) {
         auto l = input_->calculateLatencyMillis();
         if (l) total += (float) l.value();
     }
     if (output_) {
         auto l = output_->calculateLatencyMillis();
-        if (l) total += (float) l.value();
+        if (l) outOnly = (float) l.value();
     }
+    total += outOnly;
     latencyMs_.store(total, std::memory_order_relaxed);
+    outLatencyMs_.store(outOnly, std::memory_order_relaxed);
 
     // The PSOLA path adds its own delay on top, but only while it is engaged
     const float lookaheadMs = 1000.0f * (float) chain_.lookaheadSamples() / (float) sampleRate_;

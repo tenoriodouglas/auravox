@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Framework theme, not a Material Components one: this app draws entirely
+      in Compose, so the XML theme only has to paint the window before the
+      first frame. Inheriting from Theme.Material3.* would pull in the whole
+      views-based Material library for nothing.
+    -->
+    <style name="Theme.AuraVox" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/aura_background</item>
+        <item name="android:statusBarColor">@color/aura_background</item>
+        <item name="android:navigationBarColor">@color/aura_background</item>
+    </style>
+</resources>

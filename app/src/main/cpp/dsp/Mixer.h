@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <vector>
 #include "../Params.h"
 #include "Dynamics.h"
@@ -38,12 +39,18 @@ public:
         p.set(kMetronomeGain, 0.6f);
     }
 
-    /** How far the recorded track lags the monitor, in frames. */
+    /**
+     * How far the recorded track lags the monitor, in frames.
+     *
+     * Written from whichever thread last measured the latency, read by the
+     * callback, hence the atomic.
+     */
     void setAlignSamples(int n) {
-        alignSamples_ = std::min(std::max(n, 0), delayFrames_ - 1);
+        alignSamples_.store(std::min(std::max(n, 0), delayFrames_ - 1),
+                            std::memory_order_relaxed);
     }
 
-    int alignSamples() const { return alignSamples_; }
+    int alignSamples() const { return alignSamples_.load(std::memory_order_relaxed); }
 
     /**
      * Audio thread. voice and track are interleaved stereo, click is mono and
@@ -57,6 +64,7 @@ public:
         if (params.consume(kMetronomeGain, v)) clickGain_ = v;
         monitorDuck_.amount = duckAmount;
         recordDuck_.amount = duckAmount;
+        const int align = alignSamples_.load(std::memory_order_relaxed);
 
         for (int i = 0; i < frames; ++i) {
             const float vl = voice[i * 2], vr = voice[i * 2 + 1];
@@ -80,7 +88,7 @@ public:
             const int w = writeIdx_;
             delay_[(size_t) w * 2] = tl;
             delay_[(size_t) w * 2 + 1] = tr;
-            int r = w - alignSamples_;
+            int r = w - align;
             if (r < 0) r += delayFrames_;
             const float dl = delay_[(size_t) r * 2];
             const float dr = delay_[(size_t) r * 2 + 1];
@@ -116,7 +124,8 @@ public:
 private:
     int sr_ = 48000;
     std::vector<float> delay_;
-    int delayFrames_ = 0, writeIdx_ = 0, alignSamples_ = 0;
+    int delayFrames_ = 0, writeIdx_ = 0;
+    std::atomic<int> alignSamples_{0};
     float master_ = 1.0f, clickGain_ = 0.6f;
     float peak_ = 0.0f, lastPeak_ = 0.0f;
 
