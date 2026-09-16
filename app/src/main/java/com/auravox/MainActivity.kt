@@ -48,6 +48,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        model?.resumeIfNeeded()
+    }
+
     /**
      * The mic is released whenever the app leaves the foreground. Holding an
      * exclusive low-latency input stream in the background would block every
