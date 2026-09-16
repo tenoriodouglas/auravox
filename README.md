@@ -18,6 +18,20 @@ nativa em C++.
 | **Letra sincronizada** | LRC simples e estendido. Com marcação por palavra o destaque anda pela linha em vez de pular. |
 | **Contagem sample-accurate** | O metrônomo é gerado na thread de áudio, então a base entra exatamente no tempo forte. |
 
+## Baixar e instalar
+
+[**auravox-1.0-debug.apk**](https://github.com/tenoriodouglas/auravox/raw/main/dist/auravox-1.0-debug.apk) — 20 MB, arm64 e x86_64.
+
+Baixe pelo celular, abra e autorize a instalação de fontes desconhecidas
+quando o Android pedir. É um build de debug assinado com a chave padrão do
+Android SDK: instala em qualquer aparelho e continua compatível com builds
+feitos na sua máquina. Para publicar na Play Store é preciso gerar uma chave
+própria e rodar `./gradlew assembleRelease` com ela.
+
+**Use fone com fio.** No alto-falante o microfone capta a própria base e o
+monitoramento vira microfonia. Bluetooth adiciona 150–300 ms e inviabiliza
+cantar junto.
+
 ## Como rodar
 
 1. Android Studio → Open → esta pasta
