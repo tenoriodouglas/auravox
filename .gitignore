@@ -11,3 +11,6 @@ captures/
 # O APK e publicado numa release rolante, nao versionado: cada commit de um
 # binario de 20 MB fica no historico do git para sempre
 dist/
+
+# Concessao pessoal de permissao, nao pertence ao repositorio
+.claude/settings.local.json
