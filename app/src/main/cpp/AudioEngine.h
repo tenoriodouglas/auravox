@@ -53,8 +53,15 @@ public:
     int sampleRate() const { return sampleRate_; }
     int framesPerBurst() const { return framesPerBurst_; }
 
-    /** Round-trip latency in ms: input + output streams plus PSOLA lookahead. */
+    /** Round-trip latency in ms: input + output streams. */
     float latencyMs() const { return latencyMs_.load(std::memory_order_relaxed); }
+
+    /**
+     * Output-only latency. The display reads this: what the listener hears now
+     * left the mixer this long ago, so lyrics and the pitch lane have to be
+     * drawn that far behind the playhead to sit under the sound.
+     */
+    float outputLatencyMs() const { return outLatencyMs_.load(std::memory_order_relaxed); }
 
     /** Total voice-to-track offset the recorder and the scorer correct for. */
     float alignMs() const { return alignMs_.load(std::memory_order_relaxed); }
@@ -95,6 +102,7 @@ private:
     std::atomic<bool> denormalsSet_{false};
     std::atomic<bool> primed_{false};
     std::atomic<float> latencyMs_{0.0f};
+    std::atomic<float> outLatencyMs_{0.0f};
     std::atomic<float> alignMs_{0.0f};
     std::atomic<int> xruns_{0};
 

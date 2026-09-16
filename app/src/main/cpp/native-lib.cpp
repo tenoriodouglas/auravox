@@ -162,6 +162,12 @@ Java_com_auravox_audio_NativeAudio_nativeTrackRingSpace(JNIEnv *, jobject) {
     ENGINE_OR(0); return e.player().ringSpace();
 }
 
+/** Frames already decoded and waiting. Playback should not start on an empty ring. */
+JNIEXPORT jint JNICALL
+Java_com_auravox_audio_NativeAudio_nativeTrackBuffered(JNIEnv *, jobject) {
+    ENGINE_OR(0); return e.player().ringAvailable();
+}
+
 JNIEXPORT void JNICALL
 Java_com_auravox_audio_NativeAudio_nativeTrackSetEos(JNIEnv *, jobject, jboolean eos) {
     if (gEngine) gEngine->player().setEndOfStream(eos == JNI_TRUE);
@@ -257,13 +263,13 @@ Java_com_auravox_audio_NativeAudio_nativeGetScoreState(JNIEnv *env, jobject, jfl
 /**
  * Meters the performance screen polls every frame, in one transition:
  * level, output level, pitch midi, cents off, latency, align, position ms,
- * playing, finished, xruns, underruns, count-in beats left.
+ * playing, finished, xruns, underruns, count-in beats left, output latency.
  */
 JNIEXPORT void JNICALL
 Java_com_auravox_audio_NativeAudio_nativeGetTransportState(JNIEnv *env, jobject, jfloatArray out) {
     if (!gEngine) return;
     auto &e = *gEngine;
-    float v[12];
+    float v[13];
     v[0] = e.chain().peakLevel();
     v[1] = e.outputLevel();
     v[2] = e.chain().pitchMidi();
@@ -276,7 +282,8 @@ Java_com_auravox_audio_NativeAudio_nativeGetTransportState(JNIEnv *env, jobject,
     v[9] = (float) e.xrunCount();
     v[10] = (float) e.player().underruns();
     v[11] = (float) e.metronome().beatsLeft();
-    env->SetFloatArrayRegion(out, 0, 12, v);
+    v[12] = e.outputLatencyMs();
+    env->SetFloatArrayRegion(out, 0, 13, v);
 }
 
 // --- offline analysis ---
