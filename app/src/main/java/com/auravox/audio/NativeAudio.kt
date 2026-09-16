@@ -28,7 +28,9 @@ object NativeAudio {
         const val UNDERRUNS = 10
         const val COUNT_IN = 11
         const val OUT_LATENCY_MS = 12
-        const val SIZE = 13
+        const val SONG_MS = 13
+        const val LOOP_WRAP = 14
+        const val SIZE = 15
     }
 
     /** Indices into the array filled by [scoreState]. */
@@ -63,7 +65,12 @@ object NativeAudio {
     fun transportState(out: FloatArray) = nativeGetTransportState(out)
     fun scoreState(out: FloatArray) = nativeGetScoreState(out)
 
-    fun startRecording(path: String): Boolean = nativeStartRecording(path)
+    /** mixPath gets the full mix, stemPath the processed voice alone. */
+    fun startRecording(mixPath: String, stemPath: String?): Boolean =
+        nativeStartRecording(mixPath, stemPath)
+
+    /** Song time the loaded source starts at. Non-zero for a bounced layer. */
+    fun setSongOffsetMs(ms: Double) = nativeSetSongOffsetMs(ms)
     fun stopRecording() = nativeStopRecording()
 
     // --- backing track ---
@@ -124,7 +131,8 @@ object NativeAudio {
     private external fun nativeGetAlignMs(): Float
     private external fun nativeGetSampleRate(): Int
     private external fun nativeGetXruns(): Int
-    private external fun nativeStartRecording(path: String): Boolean
+    private external fun nativeStartRecording(mixPath: String, stemPath: String?): Boolean
+    private external fun nativeSetSongOffsetMs(ms: Double)
     private external fun nativeStopRecording()
     private external fun nativeTrackSetSource(sampleRate: Int, totalFrames: Long)
     private external fun nativeTrackPush(data: FloatArray, frames: Int): Int

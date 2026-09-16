@@ -14,6 +14,7 @@
 #include "dsp/PitchDetector.h"
 #include "dsp/TimeScale.h"
 #include "dsp/VocalRemover.h"
+#include "dsp/Vocoder.h"
 #include "karaoke/Analysis.h"
 #include "karaoke/ScoreTracker.h"
 #include "track/TrackPlayer.h"
@@ -52,7 +53,7 @@ static void testPitchShift() {
 
         std::vector<float> out((size_t) kSr * 3 * 2);
         for (int i = 0; i + kBlock <= (int) s.size(); i += kBlock) {
-            c.process(p, &s[i], &out[(size_t) i * 2], kBlock);
+            c.process(p, &s[i], nullptr, &out[(size_t) i * 2], kBlock);
         }
         // Collapse to mono: the chain is stereo now, the pitch is not
         std::vector<float> mono(s.size());
@@ -98,7 +99,7 @@ static float ghostBelow(int semitones) {
 
     std::vector<float> out(s.size() * 2);
     for (int i = 0; i + kBlock <= (int) s.size(); i += kBlock) {
-        c.process(p, &s[i], &out[(size_t) i * 2], kBlock);
+        c.process(p, &s[i], nullptr, &out[(size_t) i * 2], kBlock);
     }
     std::vector<float> mono(s.size());
     for (size_t i = 0; i < mono.size(); ++i) mono[i] = out[i * 2];
@@ -140,7 +141,7 @@ static void testFormantIndependence() {
 
         std::vector<float> out((size_t) s.size() * 2);
         for (int i = 0; i + kBlock <= (int) s.size(); i += kBlock) {
-            c.process(p, &s[i], &out[(size_t) i * 2], kBlock);
+            c.process(p, &s[i], nullptr, &out[(size_t) i * 2], kBlock);
         }
         std::vector<float> mono(s.size());
         for (size_t i = 0; i < mono.size(); ++i) mono[i] = out[i * 2];
@@ -318,6 +319,67 @@ static void testVocalRemover() {
     vr.process(a, b);
     check(a == 0.31f && b == -0.17f, "amount 0 is a bypass");
 }
+
+// ------------------------------------------------------------------ vocoder
+
+static void testVocoder() {
+    section("Vocoder");
+    Vocoder v;
+    v.prepare(kSr);
+
+    // Bypass has to be exact, not close: the chain blends on this return value
+    v.mix = 0.0f;
+    check(v.process(0.5f, 0.3f) == 0.0f, "mix 0 is silent");
+
+    // The words come from the voice, the note comes from the carrier
+    const int n = kSr * 2;
+    auto voice = tone(150.0f, kSr, n, 0.3f);
+    v.mix = 1.0f;
+    v.carrierTrack = 0.0f;
+    v.sibilanceAmount = 0.0f;   // isolate the pitched path
+    v.setFrequency(300.0f);
+
+    std::vector<float> out((size_t) n);
+    for (int i = 0; i < n; ++i) out[(size_t) i] = v.process(voice[(size_t) i], 0.0f);
+
+    const int tail = n / 2;
+    const float atCarrier = magnitudeAt(&out[tail], tail, 300.0f, kSr);
+    const float atVoice = magnitudeAt(&out[tail], tail, 150.0f, kSr);
+    check(atCarrier > atVoice * 4.0f, "output sings the carrier, not the voice",
+          fmt("%.1f dB acima", 20.0 * std::log10((atCarrier + 1e-9f) / (atVoice + 1e-9f))));
+    check(rms(&out[tail], tail) > 0.01f, "vocoder produces signal",
+          fmt("rms %.3f", rms(&out[tail], tail)));
+
+    // Silence in, silence out: the bank must not self-oscillate
+    v.reset();
+    std::vector<float> quiet((size_t) kSr, 0.0f);
+    for (int i = 0; i < kSr; ++i) quiet[(size_t) i] = v.process(0.0f, 0.0f);
+    check(rms(quiet.data(), kSr) < 1e-4f, "silence stays silent",
+          fmt("rms %.6f", rms(quiet.data(), kSr)));
+}
+
+static void testMonitorToggle() {
+    section("Monitor");
+    ParamStore p;
+    Mixer::applyDefaults(p);
+    Mixer m;
+    m.prepare(kSr);
+    p.set(kMonitorVoice, 0.0f);
+
+    const int n = 512;
+    std::vector<float> voice((size_t) n * 2, 0.4f);
+    std::vector<float> track((size_t) n * 2, 0.0f);
+    std::vector<float> monitor((size_t) n * 2, 0.0f);
+    std::vector<float> record((size_t) n * 2, 0.0f);
+    m.process(p, voice.data(), track.data(), nullptr,
+              monitor.data(), record.data(), n, 0.0f);
+
+    check(rms(monitor.data(), n * 2) < 1e-3f, "monitor off silences the headphones",
+          fmt("rms %.5f", rms(monitor.data(), n * 2)));
+    check(rms(record.data(), n * 2) > 0.2f, "the take keeps the full voice",
+          fmt("rms %.3f", rms(record.data(), n * 2)));
+}
+
 
 // ------------------------------------------------------- latency alignment
 
@@ -565,7 +627,7 @@ static void testCpu() {
             ring.push(&backing[pushed * 2], kBlock);
             pushed += kBlock;
         }
-        chain.process(p, &s[i], voice.data(), kBlock);
+        chain.process(p, &s[i], track.data(), voice.data(), kBlock);
         ts.render(ring, track.data(), kBlock);
         for (int k = 0; k < kBlock; ++k) remover.process(track[k * 2], track[k * 2 + 1]);
         mixer.process(p, voice.data(), track.data(), nullptr,
@@ -591,6 +653,8 @@ int main() {
     testTimeScaleKey();
     testTimeScaleRateMath();
     testVocalRemover();
+    testVocoder();
+    testMonitorToggle();
     testMixerAlignment();
     testScoring();
     testAnalysis();

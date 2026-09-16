@@ -5,6 +5,7 @@
 #include "Dynamics.h"
 #include "Spatial.h"
 #include "VoiceProcessor.h"
+#include "Vocoder.h"
 
 namespace av {
 
@@ -25,6 +26,7 @@ public:
         voice_.prepare(sampleRate);
         comp_.prepare(sampleRate);
         doubler_.prepare(sampleRate);
+        vocoder_.prepare(sampleRate);
         delay_.prepare(sampleRate);
         reverb_.prepare(sampleRate);
         reset();
@@ -67,10 +69,20 @@ public:
         p.set(kReverbDamp, 0.4f);
         p.set(kReverbPreDelay, 20.0f);
         p.set(kVocalWidth, 1.0f);
+        p.set(kVocoderMix, 0.0f);
+        p.set(kVocoderCarrier, 0.0f);
+        p.set(kVocoderSibilance, 0.6f);
     }
 
-    /** Audio thread. Mono in, interleaved stereo out. */
-    void process(ParamStore &params, const float *in, float *outLR, int frames) noexcept {
+    /**
+     * Audio thread. Mono in, interleaved stereo out.
+     *
+     * carrierLR is the backing track, already rendered. The vocoder can use it
+     * as its carrier, which is the talkbox sound; pass null when there is no
+     * track and it falls back to the internal synth.
+     */
+    void process(ParamStore &params, const float *in, const float *carrierLR,
+                 float *outLR, int frames) noexcept {
         consume(params);
 
         float peak = 0.0f;
@@ -92,6 +104,14 @@ public:
             float harm[3];
             float lead = voice_.process(s, harm);
             lead = comp_.process(lead);
+
+            if (vocoder_.mix > 0.001f) {
+                const float carrier = carrierLR
+                    ? (carrierLR[i * 2] + carrierLR[i * 2 + 1]) * 0.5f : 0.0f;
+                vocoder_.setFrequency(voice_.detectedHz());
+                const float wet = vocoder_.process(lead, carrier);
+                lead = lead * (1.0f - vocoder_.mix) + wet * vocoder_.mix;
+            }
 
             float l = lead, r = lead;
 
@@ -134,7 +154,8 @@ public:
 
     void reset() {
         gate_.reset(); eq_.reset(); deEsser_.reset(); voice_.reset();
-        comp_.reset(); doubler_.reset(); delay_.reset(); reverb_.reset();
+        comp_.reset(); doubler_.reset(); vocoder_.reset();
+        delay_.reset(); reverb_.reset();
     }
 
     /** Extra latency the PSOLA path adds, in samples. Zero when it is bypassed. */
@@ -155,7 +176,7 @@ private:
 
     void consume(ParamStore &p) noexcept {
         float v;
-        for (int id = kBypass; id <= kVocalWidth; ++id) {
+        for (int id = kBypass; id <= kVocoderSibilance; ++id) {
             if (!p.consume(id, v)) continue;
             switch (id) {
                 case kBypass:         bypass_ = v > 0.5f; break;
@@ -195,6 +216,9 @@ private:
                 case kReverbDamp:     reverb_.setDamping(v); break;
                 case kReverbPreDelay: reverb_.setPreDelayMs(v, sr_); break;
                 case kVocalWidth:     width_ = v; break;
+                case kVocoderMix:     vocoder_.mix = v; break;
+                case kVocoderCarrier: vocoder_.carrierTrack = v; break;
+                case kVocoderSibilance: vocoder_.sibilanceAmount = v; break;
                 default: break;
             }
         }
@@ -213,6 +237,7 @@ private:
     VoiceProcessor voice_;
     Compressor comp_;
     Doubler doubler_;
+    Vocoder vocoder_;
     Delay delay_;
     Reverb reverb_;
 

@@ -44,6 +44,9 @@ object Param {
     const val REVERB_DAMP = 34
     const val REVERB_PRE_DELAY = 35
     const val VOCAL_WIDTH = 36
+    const val VOCODER_MIX = 37
+    const val VOCODER_CARRIER = 38
+    const val VOCODER_SIBILANCE = 39
 
     // backing track
     const val TRACK_GAIN = 48
@@ -52,11 +55,15 @@ object Param {
     const val TRACK_VOCAL_REMOVE = 51
     const val TRACK_DUCK = 52
     const val TRACK_WIDTH = 53
+    const val LOOP_START_MS = 54
+    const val LOOP_END_MS = 55
+    const val LOOP_ENABLED = 56
 
     // master and transport
     const val MASTER_GAIN = 64
     const val LATENCY_TRIM_MS = 65
     const val METRONOME_GAIN = 66
+    const val MONITOR_VOICE = 67
 }
 
 enum class ScaleType(val label: String) {

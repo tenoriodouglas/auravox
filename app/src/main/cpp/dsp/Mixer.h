@@ -37,6 +37,7 @@ public:
         p.set(kMasterGain, 1.0f);
         p.set(kLatencyTrimMs, 0.0f);
         p.set(kMetronomeGain, 0.6f);
+        p.set(kMonitorVoice, 1.0f);
     }
 
     /**
@@ -62,6 +63,7 @@ public:
         float v;
         if (params.consume(kMasterGain, v)) master_ = v;
         if (params.consume(kMetronomeGain, v)) clickGain_ = v;
+        if (params.consume(kMonitorVoice, v)) monitorVoice_ = v;
         monitorDuck_.amount = duckAmount;
         recordDuck_.amount = duckAmount;
         const int align = alignSamples_.load(std::memory_order_relaxed);
@@ -71,9 +73,12 @@ public:
             const float tl = track[i * 2], tr = track[i * 2 + 1];
             const float sidechain = (vl + vr) * 0.5f;
 
+            // The take always gets the full voice; only what reaches the
+            // headphones is attenuated. Singing on a speaker means turning the
+            // monitor off, not throwing the take away.
             const float dm = monitorDuck_.gainFor(sidechain);
-            float ml = vl + tl * dm;
-            float mr = vr + tr * dm;
+            float ml = vl * monitorVoice_ + tl * dm;
+            float mr = vr * monitorVoice_ + tr * dm;
 
             if (click) { ml += click[i] * clickGain_; mr += click[i] * clickGain_; }
 
@@ -126,7 +131,7 @@ private:
     std::vector<float> delay_;
     int delayFrames_ = 0, writeIdx_ = 0;
     std::atomic<int> alignSamples_{0};
-    float master_ = 1.0f, clickGain_ = 0.6f;
+    float master_ = 1.0f, clickGain_ = 0.6f, monitorVoice_ = 1.0f;
     float peak_ = 0.0f, lastPeak_ = 0.0f;
 
     Ducker monitorDuck_, recordDuck_;

@@ -43,9 +43,27 @@ public:
     ScoreTracker &score() { return score_; }
     Metronome &metronome() { return metronome_; }
 
-    bool startRecording(const std::string &path);
+    /**
+     * Starts a take. `mixPath` gets the full mix, `stemPath` the processed
+     * voice alone. The mix is what the next layer plays against, and what
+     * makes overdub cost nothing: every pass bounces down to one file.
+     */
+    bool startRecording(const std::string &mixPath, const std::string &stemPath);
     void stopRecording();
     bool isRecording() const { return wav_.active(); }
+
+    /**
+     * Song time of the first frame of the source now loaded.
+     *
+     * A bounced mix starts one alignment offset before the song did, because
+     * the take carries the track already delayed. Without this the second
+     * layer would score and read lyrics a round trip early.
+     */
+    void setSongOffsetMs(double ms) { songOffsetMs_.store(ms, std::memory_order_relaxed); }
+    double songOffsetMs() const { return songOffsetMs_.load(std::memory_order_relaxed); }
+
+    /** Song position, offset applied. This is the one the UI and scoring use. */
+    double songMs() const { return player_.positionMs() + songOffsetMs(); }
 
     /** Counts `beats` in at `bpm`, then starts the track on the exact downbeat. */
     void startCountIn(float bpm, int beats);
@@ -96,6 +114,7 @@ private:
     Metronome metronome_;
     ScoreTracker score_;
     WavWriter wav_;
+    WavWriter stemWav_;
 
     std::mutex lifecycleLock_;
     std::atomic<bool> running_{false};
@@ -104,6 +123,7 @@ private:
     std::atomic<float> latencyMs_{0.0f};
     std::atomic<float> outLatencyMs_{0.0f};
     std::atomic<float> alignMs_{0.0f};
+    std::atomic<double> songOffsetMs_{0.0};
     std::atomic<int> xruns_{0};
 
     int sampleRate_ = 48000;

@@ -161,8 +161,9 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream * /*stream*
         if (framesRead == 0) xruns_.fetch_add(1, std::memory_order_relaxed);
     }
 
-    chain_.process(params_, micBuf_.data(), voiceBuf_.data(), frames);
+    // The track is rendered first so the vocoder can use it as its carrier
     player_.render(params_, trackBuf_.data(), frames);
+    chain_.process(params_, micBuf_.data(), trackBuf_.data(), voiceBuf_.data(), frames);
 
     const bool clicking = metronome_.running();
     if (clicking) {
@@ -176,16 +177,19 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream * /*stream*
                    out, recording ? recBuf_.data() : nullptr,
                    frames, player_.duckAmount());
 
-    if (recording) wav_.push(recBuf_.data(), frames);
+    if (recording) {
+        wav_.push(recBuf_.data(), frames);
+        stemWav_.push(voiceBuf_.data(), frames);
+    }
 
     // The singer reacts to what they heard, not to what is being written now.
     // Scoring the raw playhead marks every take as late by the round trip.
     if (player_.isPlaying()) {
         const float tempo = params_.get(kTrackTempo);
-        const double songMs = player_.positionMs() -
+        const double sungAt = this->songMs() -
                               (double) alignMs_.load(std::memory_order_relaxed) *
                               (tempo > 0.01f ? tempo : 1.0f);
-        score_.update(songMs, chain_.pitchMidi(), chain_.confidence(), frames);
+        score_.update(sungAt, chain_.pitchMidi(), chain_.confidence(), frames);
     }
 
     // Latency changes as the buffer size adapts; poll roughly twice a second
@@ -232,14 +236,21 @@ void AudioEngine::onErrorAfterClose(oboe::AudioStream * /*stream*/, oboe::Result
     }
 }
 
-bool AudioEngine::startRecording(const std::string &path) {
+bool AudioEngine::startRecording(const std::string &mixPath, const std::string &stemPath) {
     if (!running_.load(std::memory_order_acquire)) return false;
     updateLatency();  // pin the alignment to the latency measured right now
-    return wav_.start(path, sampleRate_);
+
+    if (!wav_.start(mixPath, sampleRate_)) return false;
+    if (!stemPath.empty() && !stemWav_.start(stemPath, sampleRate_)) {
+        wav_.stop();
+        return false;
+    }
+    return true;
 }
 
 void AudioEngine::stopRecording() {
     wav_.stop();
+    stemWav_.stop();
 }
 
 void AudioEngine::startCountIn(float bpm, int beats) {

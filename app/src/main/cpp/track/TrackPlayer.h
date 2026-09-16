@@ -34,6 +34,9 @@ public:
         p.set(kTrackVocalRemove, 0.0f);
         p.set(kTrackDuck, 0.0f);
         p.set(kTrackWidth, 1.0f);
+        p.set(kLoopStartMs, 0.0f);
+        p.set(kLoopEndMs, 0.0f);
+        p.set(kLoopEnabled, 0.0f);
     }
 
     // --- decoder thread ---
@@ -76,6 +79,7 @@ public:
         playing_.store(false, std::memory_order_relaxed);
         finished_.store(false, std::memory_order_relaxed);
         eof_.store(false, std::memory_order_relaxed);
+        loopWrap_.store(false, std::memory_order_relaxed);
         flushPending_.store(false, std::memory_order_relaxed);
         baseFrame_.store(0, std::memory_order_relaxed);
         positionFrames_.store(0.0, std::memory_order_relaxed);
@@ -96,6 +100,14 @@ public:
     int64_t totalFrames() const { return totalFrames_.load(std::memory_order_relaxed); }
     int trackRate() const { return trackRate_; }
     int underruns() const { return underruns_.load(std::memory_order_relaxed); }
+
+    /**
+     * True once the playhead has run past the loop end. Seeking needs the
+     * decoder, which lives on the Kotlin side, so the audio thread raises the
+     * flag and the transport polls it.
+     */
+    bool consumeLoopWrap() { return loopWrap_.exchange(false, std::memory_order_acq_rel); }
+    float loopStartMs() const { return loopStart_; }
 
     /** Sidechain level the ducker reads, updated once per block. */
     float lastPeak() const { return peak_.load(std::memory_order_relaxed); }
@@ -144,16 +156,26 @@ public:
         }
         peak_.store(peak, std::memory_order_relaxed);
 
-        positionFrames_.store(
-            (double) baseFrame_.load(std::memory_order_relaxed) + scale_.sourcePosition(),
-            std::memory_order_relaxed);
+        const double pos = (double) baseFrame_.load(std::memory_order_relaxed) +
+                           scale_.sourcePosition();
+        positionFrames_.store(pos, std::memory_order_relaxed);
+
+        if (loopEnabled_ && loopEnd_ > loopStart_ + 200.0f) {
+            const double ms = pos * 1000.0 / (double) trackRate_;
+            if (ms >= (double) loopEnd_) {
+                // Stop at the loop point so the bar after it is never heard;
+                // the transport seeks back and starts again
+                playing_.store(false, std::memory_order_release);
+                loopWrap_.store(true, std::memory_order_release);
+            }
+        }
     }
 
 private:
     void consume(ParamStore &p) noexcept {
         float v;
         bool ratesChanged = rateDirty_.exchange(false, std::memory_order_acquire);
-        for (int id = kTrackGain; id <= kTrackWidth; ++id) {
+        for (int id = kTrackGain; id <= kLoopEnabled; ++id) {
             if (!p.consume(id, v)) continue;
             switch (id) {
                 case kTrackGain:        gain_ = v; break;
@@ -162,6 +184,9 @@ private:
                 case kTrackVocalRemove: remover_.amount = v; break;
                 case kTrackDuck:        duck_ = v; break;
                 case kTrackWidth:       width_ = v; break;
+                case kLoopStartMs:      loopStart_ = v; break;
+                case kLoopEndMs:        loopEnd_ = v; break;
+                case kLoopEnabled:      loopEnabled_ = v > 0.5f; break;
                 default: break;
             }
         }
@@ -188,6 +213,8 @@ private:
     int trackRate_ = 48000;
     float gain_ = 0.9f, keyShift_ = 0.0f, tempo_ = 1.0f, width_ = 1.0f;
     float duck_ = 0.0f;
+    float loopStart_ = 0.0f, loopEnd_ = 0.0f;
+    bool loopEnabled_ = false;
 
     std::atomic<bool> playing_{false};
     std::atomic<bool> finished_{false};
@@ -200,6 +227,7 @@ private:
     std::atomic<double> positionFrames_{0.0};
     std::atomic<float> peak_{0.0f};
     std::atomic<int> underruns_{0};
+    std::atomic<bool> loopWrap_{false};
 };
 
 }  // namespace av
