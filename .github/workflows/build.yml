@@ -30,11 +30,19 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
-      - uses: android-actions/setup-android@v3
-
+      # O runner ja traz o SDK em ANDROID_HOME. A action setup-android nao e
+      # usada porque ela instala o pacote legado "tools", que saiu do
+      # repositorio do SDK e faz o passo inteiro falhar antes do build.
       - name: NDK e CMake
-        run: sdkmanager --install "ndk;27.0.12077973" "cmake;3.22.1"
+        run: |
+          set -eo pipefail
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -r | head -n 1)
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --install "ndk;27.0.12077973" "cmake;3.22.1" > /dev/null
+          echo "ndk: $(ls "$ANDROID_HOME/ndk")"
 
       - name: Build
         run: ./gradlew assembleDebug --no-daemon
