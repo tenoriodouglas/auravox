@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Debug-only: lets the self-updater hand a downloaded APK to the system
+         installer. The distributed build is the debug one; a store build never
+         carries this. The FileProvider it needs is the app's single one,
+         declared in the main manifest, because the merger matches providers by
+         class name and two of them collide. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+</manifest>

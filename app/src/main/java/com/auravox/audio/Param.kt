@@ -47,6 +47,7 @@ object Param {
     const val VOCODER_MIX = 37
     const val VOCODER_CARRIER = 38
     const val VOCODER_SIBILANCE = 39
+    const val PITCH_GUIDE = 40
 
     // backing track
     const val TRACK_GAIN = 48

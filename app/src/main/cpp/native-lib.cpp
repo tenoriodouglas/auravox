@@ -35,9 +35,27 @@ Java_com_auravox_audio_NativeAudio_nativeDestroy(JNIEnv *, jobject) {
     gEngine.reset();
 }
 
+/**
+ * deviceId is an Android AudioDeviceInfo id, or 0 for whatever the system
+ * picks. `communication` gives up the fast capture path, which a Bluetooth
+ * headset microphone has no way of providing.
+ */
 JNIEXPORT jboolean JNICALL
-Java_com_auravox_audio_NativeAudio_nativeStart(JNIEnv *, jobject) {
-    return gEngine && gEngine->start() ? JNI_TRUE : JNI_FALSE;
+Java_com_auravox_audio_NativeAudio_nativeStart(JNIEnv *, jobject,
+                                               jint deviceId, jboolean communication) {
+    return gEngine && gEngine->start(deviceId, communication == JNI_TRUE)
+           ? JNI_TRUE : JNI_FALSE;
+}
+
+/** Device the input actually opened on, which may not be the one requested. */
+JNIEXPORT jint JNICALL
+Java_com_auravox_audio_NativeAudio_nativeInputDeviceId(JNIEnv *, jobject) {
+    ENGINE_OR(0); return e.inputDeviceId();
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_auravox_audio_NativeAudio_nativeInputIsLowLatency(JNIEnv *, jobject) {
+    return gEngine && gEngine->lowLatencyInput() ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL

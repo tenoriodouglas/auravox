@@ -72,6 +72,7 @@ public:
         p.set(kVocoderMix, 0.0f);
         p.set(kVocoderCarrier, 0.0f);
         p.set(kVocoderSibilance, 0.6f);
+        p.set(kPitchGuide, 1.0f);
     }
 
     /**
@@ -84,6 +85,10 @@ public:
     void process(ParamStore &params, const float *in, const float *carrierLR,
                  float *outLR, int frames) noexcept {
         consume(params);
+
+        // Hoisted: the detector only produces a new estimate every 21 ms, so
+        // pushing it per sample is a call and a branch for nothing
+        vocoder_.setFrequency(voice_.detectedHz());
 
         float peak = 0.0f;
         for (int i = 0; i < frames; ++i) {
@@ -108,7 +113,6 @@ public:
             if (vocoder_.mix > 0.001f) {
                 const float carrier = carrierLR
                     ? (carrierLR[i * 2] + carrierLR[i * 2 + 1]) * 0.5f : 0.0f;
-                vocoder_.setFrequency(voice_.detectedHz());
                 const float wet = vocoder_.process(lead, carrier);
                 lead = lead * (1.0f - vocoder_.mix) + wet * vocoder_.mix;
             }
@@ -171,12 +175,15 @@ public:
 
     VoiceProcessor &voice() { return voice_; }
 
+    /** Melody note the song is on, fed in once per block. Negative when none. */
+    void setGuideMidi(float midi) { voice_.guideMidi = midi; }
+
 private:
     static constexpr float kHarmonyPan[3] = {-1.0f, 1.0f, -0.35f};
 
     void consume(ParamStore &p) noexcept {
         float v;
-        for (int id = kBypass; id <= kVocoderSibilance; ++id) {
+        for (int id = kBypass; id <= kPitchGuide; ++id) {
             if (!p.consume(id, v)) continue;
             switch (id) {
                 case kBypass:         bypass_ = v > 0.5f; break;
@@ -219,6 +226,7 @@ private:
                 case kVocoderMix:     vocoder_.mix = v; break;
                 case kVocoderCarrier: vocoder_.carrierTrack = v; break;
                 case kVocoderSibilance: vocoder_.sibilanceAmount = v; break;
+                case kPitchGuide:     voice_.useGuide = v > 0.5f; break;
                 default: break;
             }
         }

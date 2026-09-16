@@ -12,6 +12,7 @@
 #include "Params.h"
 #include "WavWriter.h"
 #include "dsp/FxChain.h"
+#include "dsp/InputFifo.h"
 #include "dsp/Metronome.h"
 #include "dsp/Mixer.h"
 #include "karaoke/ScoreTracker.h"
@@ -33,7 +34,15 @@ public:
     AudioEngine() = default;
     ~AudioEngine() override { stop(); }
 
-    bool start();
+    /**
+     * Opens the streams and starts.
+     *
+     * `inputDeviceId` is an Android AudioDeviceInfo id, or 0 for whatever the
+     * system picks. A Bluetooth headset mic only appears once the platform has
+     * routed communication audio to it, and it will never open on the fast
+     * capture path, so `communication` relaxes the request for it.
+     */
+    bool start(int32_t inputDeviceId = 0, bool communication = false);
     void stop();
     bool isRunning() const { return running_.load(std::memory_order_acquire); }
 
@@ -89,6 +98,13 @@ public:
 
     float outputLevel() const { return mixer_.peak(); }
 
+    /** Capture slack currently held, in frames. Grows on a jittery device. */
+    int inputCushionFrames() const { return fifoPolicy_.cushion; }
+
+    /** Input device actually opened, so the UI can show what is being heard. */
+    int32_t inputDeviceId() const { return openedDeviceId_; }
+    bool lowLatencyInput() const { return lowLatencyInput_; }
+
     // oboe::AudioStreamDataCallback
     oboe::DataCallbackResult onAudioReady(oboe::AudioStream *stream,
                                           void *audioData,
@@ -100,7 +116,9 @@ public:
 private:
     static constexpr int kMaxBlockFrames = 4096;
 
-    bool openStreams();
+    bool openStreams(int32_t inputDeviceId, bool communication);
+    bool openInput(int32_t inputDeviceId, bool communication);
+    void adaptBufferSize();
     void closeStreams();
     void updateLatency();
 
@@ -129,6 +147,14 @@ private:
     int sampleRate_ = 48000;
     int framesPerBurst_ = 192;
     int latencyPollCounter_ = 0;
+    int32_t openedDeviceId_ = 0;
+    int32_t requestedDeviceId_ = 0;
+    bool requestedCommunication_ = false;
+    int lastOutputXRun_ = 0;
+    bool lowLatencyInput_ = true;
+
+    InputFifo inputFifo_;
+    FifoPolicy fifoPolicy_;
 
     std::vector<float> micBuf_, voiceBuf_, trackBuf_, clickBuf_, recBuf_, drainBuf_;
 };

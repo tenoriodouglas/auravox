@@ -3,4 +3,6 @@
     <!-- Where takes are written. Only this subtree is ever shared out. -->
     <external-files-path name="takes" path="takes/" />
     <files-path name="library" path="library/" />
+    <!-- The self-updater downloads the APK here before handing it to the installer. -->
+    <cache-path name="updates" path="updates/" />
 </paths>

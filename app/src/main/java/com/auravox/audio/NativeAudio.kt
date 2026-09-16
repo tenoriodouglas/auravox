@@ -49,7 +49,17 @@ object NativeAudio {
 
     fun create(): Boolean = nativeCreate()
     fun destroy() = nativeDestroy()
-    fun start(): Boolean = nativeStart()
+    /**
+     * @param deviceId Android AudioDeviceInfo id, or 0 to let the system pick.
+     * @param communication gives up the fast capture path; a Bluetooth headset
+     *   microphone runs over SCO, which has none.
+     */
+    fun start(deviceId: Int = 0, communication: Boolean = false): Boolean =
+        nativeStart(deviceId, communication)
+
+    /** Device the input actually opened on, which may not be the one asked for. */
+    fun inputDeviceId(): Int = nativeInputDeviceId()
+    fun inputIsLowLatency(): Boolean = nativeInputIsLowLatency()
     fun stop() = nativeStop()
     fun isRunning(): Boolean = nativeIsRunning()
 
@@ -115,7 +125,9 @@ object NativeAudio {
 
     private external fun nativeCreate(): Boolean
     private external fun nativeDestroy()
-    private external fun nativeStart(): Boolean
+    private external fun nativeStart(deviceId: Int, communication: Boolean): Boolean
+    private external fun nativeInputDeviceId(): Int
+    private external fun nativeInputIsLowLatency(): Boolean
     private external fun nativeStop()
     private external fun nativeIsRunning(): Boolean
     private external fun nativeSetParam(id: Int, value: Float)

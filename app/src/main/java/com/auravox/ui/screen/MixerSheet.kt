@@ -114,6 +114,25 @@ private fun VoiceTab(vm: KaraokeViewModel) {
     Header("Afinação")
     ParamSlider(vm, Param.PITCH_AMOUNT, "Autotune", 0f, 1f) { "${(it * 100).roundToInt()}%" }
     ParamSlider(vm, Param.RETUNE_MS, "Velocidade", 1f, 200f) { "${it.roundToInt()} ms" }
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Corrigir pela melodia", style = MaterialTheme.typography.bodyMedium)
+            Note(
+                "Leva a voz para a nota que a música pede naquele instante, " +
+                    "não para a mais próxima da escala. Sem melodia analisada, " +
+                    "cai na escala sozinho."
+            )
+        }
+        Switch(
+            checked = vm.get(Param.PITCH_GUIDE) > 0.5f,
+            onCheckedChange = { vm.set(Param.PITCH_GUIDE, if (it) 1f else 0f) },
+            colors = SwitchDefaults.colors(checkedTrackColor = Aura.Violet)
+        )
+    }
 
     Header("Tom")
     Row(
@@ -236,8 +255,37 @@ private fun EffectsTab(vm: KaraokeViewModel) {
     ParamSlider(vm, Param.GATE_THRESHOLD, "Gate", -80f, -20f) { "${it.roundToInt()} dB" }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsTab(vm: KaraokeViewModel) {
+    Header("Microfone")
+    Note(
+        if (vm.lowLatencyInput) "Caminho rápido de captura ativo."
+        else "Captura em modo normal: mais latência, mas é o único jeito de " +
+            "usar microfone Bluetooth."
+    )
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        vm.micOptions.forEach { option ->
+            FilterChip(
+                selected = vm.selectedMic.id == option.id,
+                onClick = { vm.selectMic(option) },
+                label = { Text(option.label) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = Aura.Violet.copy(alpha = 0.35f),
+                    selectedLabelColor = Aura.Teal
+                )
+            )
+        }
+    }
+    Note(
+        "O Android não entrega o microfone de um fone Bluetooth a menos que a " +
+            "captura entre em modo de comunicação — por isso escolher aqui é " +
+            "o que faz o app parar de usar o microfone do celular."
+    )
+
     Header("Sincronismo da gravação")
     Note(
         "O AuraVox já desconta a latência medida (${vm.alignMs.roundToInt()} ms) " +
@@ -290,6 +338,26 @@ private fun SettingsTab(vm: KaraokeViewModel) {
         "Taxa ${vm.sampleRate} Hz · latência ${vm.latencyMs.roundToInt()} ms · " +
             "falhas ${vm.xruns + vm.underruns}"
     )
+
+    Header("Atualização")
+    Note("O app se atualiza a partir da última build publicada pela CI.")
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        FilterChip(
+            selected = false,
+            onClick = { vm.checkForUpdate() },
+            label = { Text("Verificar agora") }
+        )
+        if (vm.update != null) {
+            FilterChip(
+                selected = true,
+                onClick = { vm.installUpdate() },
+                label = { Text("Instalar ${vm.update?.versionName}") }
+            )
+        }
+    }
 }
 
 // --------------------------------------------------------------- primitives

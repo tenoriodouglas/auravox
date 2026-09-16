@@ -28,7 +28,6 @@ public:
         for (int i = 0; i < kBands; ++i) {
             const float f = kLowHz * std::pow(kHighHz / kLowHz,
                                               (float) i / (float) (kBands - 1));
-            centre_[i] = f;
             modA_[i].bandPass(sr_, f, kQ);
             modB_[i].bandPass(sr_, f, kQ);
             carA_[i].bandPass(sr_, f, kQ);
@@ -58,10 +57,16 @@ public:
         if (mix <= 0.001f) return 0.0f;
 
         // Internal carrier: two saws a few cents apart beat against each other
-        // so a held note does not sound like a test tone
+        // so a held note does not sound like a test tone. The detune factor is
+        // a constant between parameter changes, and exp2 is far too expensive
+        // to evaluate once per sample for it.
+        if (spread != cachedSpread_) {
+            cachedSpread_ = spread;
+            detune_ = std::exp2(spread / 12.0f);
+        }
         const float step = freq_ / (float) sr_;
         phaseA_ += step;
-        phaseB_ += step * std::exp2(spread / 12.0f);
+        phaseB_ += step * detune_;
         if (phaseA_ >= 1.0f) phaseA_ -= 1.0f;
         if (phaseB_ >= 1.0f) phaseB_ -= 1.0f;
         const float synth = (phaseA_ * 2.0f - 1.0f) * 0.5f +
@@ -113,10 +118,10 @@ private:
     int sr_ = 48000;
     Biquad modA_[kBands], modB_[kBands], carA_[kBands], carB_[kBands];
     Biquad sibilance_;
-    float centre_[kBands] = {0.0f};
     float env_[kBands] = {0.0f};
     float attack_ = 0.1f, release_ = 0.02f;
     float freq_ = 110.0f, phaseA_ = 0.0f, phaseB_ = 0.0f;
+    float cachedSpread_ = -1.0f, detune_ = 1.0f;
     float hissEnv_ = 0.0f;
     unsigned noise_ = 22222u;
 };

@@ -21,20 +21,27 @@ nativa em C++.
 | **Loop A–B com andamento** | Marque o trecho, baixe o andamento e repita até acertar. Nenhum processador vocal tem motivo para ter isso; um app de karaokê tem. |
 | **Vocoder e talkbox** | A voz vira filtro. A portadora é um sintetizador afinado na nota cantada ou a própria base — aí a música fala a letra. |
 | **Ouvir, exportar e compartilhar** | Toca no próprio app, salva em Música/AuraVox e compartilha por FileProvider. |
+| **Escolha do microfone** | Inclusive o de fone Bluetooth, que o Android não entrega enquanto a captura não entrar em modo de comunicação. |
+| **Atualização automática** | Lê o manifesto publicado pela CI e instala a versão nova sem passar por loja. |
 
 ## Baixar e instalar
 
-[**auravox-1.0-debug.apk**](https://github.com/tenoriodouglas/auravox/raw/main/dist/auravox-1.0-debug.apk) — 20 MB, arm64 e x86_64.
+[**auravox-latest.apk**](https://github.com/tenoriodouglas/auravox/releases/download/apk-latest/auravox-latest.apk) — arm64 e x86_64.
 
-Baixe pelo celular, abra e autorize a instalação de fontes desconhecidas
-quando o Android pedir. É um build de debug assinado com a chave padrão do
-Android SDK: instala em qualquer aparelho e continua compatível com builds
-feitos na sua máquina. Para publicar na Play Store é preciso gerar uma chave
-própria e rodar `./gradlew assembleRelease` com ela.
+O link é fixo e sempre serve a última build da `main`. A CI republica a mesma
+tag a cada commit, então nem o repositório nem a lista de releases cresce — e
+**o app se atualiza sozinho**: ele lê o `latest.json` publicado ao lado do APK,
+e quando o `versionCode` de lá é maior que o instalado, oferece a atualização
+na biblioteca. Basta tocar em Atualizar; o Android pede a autorização de
+instalação na primeira vez.
+
+Build de debug assinado com a chave padrão do SDK: instala em qualquer
+aparelho e continua compatível com builds feitos na sua máquina. Para publicar
+na Play Store é preciso gerar uma chave própria e rodar `./gradlew
+assembleRelease` com ela.
 
 **Use fone com fio.** No alto-falante o microfone capta a própria base e o
-monitoramento vira microfonia. Bluetooth adiciona 150–300 ms e inviabiliza
-cantar junto.
+monitoramento vira microfonia.
 
 ## Como rodar
 
@@ -82,6 +89,7 @@ latência.
 | `cpp/dsp/Mixer.h` | Monitor, take alinhado, ducking, limiter |
 | `cpp/dsp/Metronome.h` | Contagem que entrega o downbeat exato |
 | `cpp/dsp/Vocoder.h` | Banco de 16 bandas, portadora de síntese ou da base |
+| `cpp/dsp/InputFifo.h` | FIFO de captura e a política de escorva |
 | `cpp/dsp/Spatial.h` | Reverb estéreo, delay ping-pong, doubler |
 | `cpp/dsp/Dynamics.h` | Gate, compressor, de-esser, limiter, EQ, ducker |
 | `cpp/track/TrackPlayer.h` | Playhead, ring do decoder, ganho, remoção de vocal |
@@ -91,8 +99,31 @@ latência.
 | `kotlin/audio/TrackDecoder.kt` | Streaming para o ring, com backpressure |
 | `kotlin/audio/SongAnalyzer.kt` | Decodifica, reduz para 11 kHz mono, chama a análise |
 | `kotlin/karaoke/Lrc.kt` | LRC simples e estendido |
+| `kotlin/audio/AudioDevices.kt` | Escolha de microfone e roteamento Bluetooth |
 | `kotlin/karaoke/Exporter.kt` | FileProvider e MediaStore |
+| `kotlin/update/GithubUpdater.kt` | Atualização a partir da release rolante |
 | `kotlin/ui/widget/PitchLane.kt` | O piano roll rolando |
+
+## Por que a captura não pode ser lida direto no callback
+
+Entrada e saída rodam no mesmo clock de amostragem, mas em threads diferentes.
+O que oscila entre um callback e outro é a fase, não a taxa. Ler o stream de
+entrada dentro do callback de saída significa que, toda vez que o callback
+chega um fio antes da rajada de captura terminar, a leitura vem curta — e
+completar o resto com zero emenda silêncio no meio da voz, várias vezes por
+segundo. Isso é o chiado.
+
+A captura é drenada para um FIFO e o bloco é servido de lá, com uma almofada de
+folga à frente do consumidor. Um bloco é inteiro ou é recusado; nunca meio. A
+almofada começa em uma rajada e **cresce sozinha** quando o aparelho prova que
+precisa de mais, até quatro rajadas — quanto os dois relógios se afastam entre
+callbacks é característica do aparelho, não algo que se adivinhe em tempo de
+compilação. O buffer de saída segue a mesma ideia: cresce uma rajada a cada
+falha em vez de estalar a música inteira.
+
+O teste `Continuidade da captura` mede isso com um contador como sinal: cada
+amostra tem que ser exatamente a anterior mais um. O caminho antigo dá 163
+cortes em 2000 blocos; com o FIFO, zero.
 
 ## Camadas sem custo
 
@@ -115,6 +146,41 @@ correm adiantados por um round trip inteiro.
 Uma consequência: **o andamento trava** quando existem camadas. Esticar a base
 esticaria junto a voz já gravada, e a versão disso que alguém iria querer não
 existe. Mudar o tom continua liberado — ele move a mixagem inteira de uma vez.
+
+## Microfone Bluetooth
+
+O Android não entrega o microfone de um fone Bluetooth a um app só porque o
+fone está conectado. A captura precisa entrar em modo de comunicação (SCO), e
+esse caminho **não tem versão de baixa latência** — pedir uma faz o sistema
+devolver o microfone do próprio celular, que é exatamente o que parece de fora.
+
+Em Mixer → Ajustes dá para escolher a entrada. Ao escolher um Bluetooth o app
+liga o SCO, espera o enlace subir e reabre o áudio sem exigir o caminho rápido.
+Duas consequências, que ele avisa na hora:
+
+- o monitor é desligado sozinho — 150 a 300 ms de ida e volta torna impossível
+  cantar se ouvindo
+- o SCO é bidirecional, então a música também passa a sair em banda estreita
+  pelo enlace enquanto o microfone estiver em uso
+
+Para cantar de verdade, fone com fio. O Bluetooth está ali para quem não tem
+outra opção.
+
+## Correção guiada pela melodia
+
+Travar na escala só leva a voz para a nota mais próxima dela — no cromático,
+no máximo cinquenta cents, e em qualquer escala ainda pode ser a nota errada do
+acorde. Como o app já extraiu a melodia da música, ele sabe **qual nota a
+pessoa estava tentando alcançar** naquele instante, e corrige para essa.
+
+A nota do guia é dobrada para a oitava em que a pessoa está cantando, então um
+barítono cantando a melodia uma oitava abaixo é corrigido dentro da própria
+oitava em vez de ser arrastado para cima. Passando de três semitons de
+distância, quem está cantando não está naquela nota: puxar seria pior do que
+deixar quieto, e a escala reassume.
+
+Liga em Mixer → Voz → Corrigir pela melodia, e vem ligado nos presets
+**Karaokê** e **Perfeito**.
 
 ## Como o PSOLA funciona aqui
 
@@ -148,7 +214,7 @@ tools/run_tests.sh
 ```
 
 Roda no host, sem Android: `dsp/`, `track/` e `karaoke/` não dependem de nada
-além da biblioteca padrão. 68 checagens, entre elas:
+além da biblioteca padrão. 79 checagens, entre elas:
 
 ```
 PSOLA pitch shift          -12 a +12 semitons, erro 0.0 cents
@@ -159,6 +225,7 @@ Alinhamento da gravação    base e voz no mesmo frame no take
 Pontuação                  60 ms de latência não custa ponto
 Análise                    frase em dó maior: 7/7 notas, tom e 120 BPM
 Vocoder                    saída canta a portadora, 46 dB acima da voz
+Continuidade da captura    0 cortes com FIFO contra 163 sem
 Monitor desligado          fone em silêncio, take com a voz inteira
 Pior caso                  3.2% de tempo real em x86
 ```

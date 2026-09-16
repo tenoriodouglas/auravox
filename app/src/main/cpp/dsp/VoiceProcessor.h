@@ -35,6 +35,17 @@ public:
     int harmonyDegrees[3] = {2, 4, -3};  // scale steps relative to the lead
     int harmonyVoices = 2;      // 1..3
 
+    /**
+     * Note the song's melody is on right now, or negative when there is none.
+     *
+     * Snapping to a scale only ever moves the voice to the nearest note in it,
+     * which on a chromatic scale is at most fifty cents and on any scale can
+     * still be the wrong note of the chord. The melody guide says which note
+     * the singer was reaching for, so the correction lands on that one.
+     */
+    float guideMidi = -1.0f;
+    bool useGuide = false;
+
     void setRetuneMs(float ms) {
         if (ms < 1.0f) ms = 1.0f;
         smoothCoef_ = timeCoef(ms, sr_);
@@ -86,6 +97,23 @@ public:
     }
 
 private:
+    /**
+     * Where the voice should land.
+     *
+     * The guide note is folded into whatever octave the singer is actually in,
+     * so a tenor singing the melody an octave down is corrected to his own
+     * octave rather than dragged up. Past three semitones the singer is on a
+     * different note than the guide expects, and pulling them there would be
+     * worse than leaving them alone, so the scale takes over.
+     */
+    float resolveTarget(float midi) const {
+        const float scaleSnap = snapToScale(midi, keyRoot, scale);
+        if (!useGuide || guideMidi <= 0.0f) return scaleSnap;
+
+        const float folded = guideMidi + 12.0f * std::round((midi - guideMidi) / 12.0f);
+        return std::fabs(midi - folded) <= 3.0f ? folded : scaleSnap;
+    }
+
     void updateTargets() {
         if (!detector_.voiced()) {
             lead_.setPeriod(0.0f);
@@ -102,7 +130,7 @@ private:
         for (auto &h : harm_) h.setPeriod(period);
 
         const float midi = hzToMidi(f0);
-        const float snapped = snapToScale(midi, keyRoot, scale);
+        const float snapped = resolveTarget(midi);
         currentNote_ = ((int) std::lround(snapped) % 12 + 12) % 12;
         centsOff_ = (midi - std::round(midi)) * 100.0f;
 

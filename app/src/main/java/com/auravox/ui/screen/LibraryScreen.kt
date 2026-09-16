@@ -24,6 +24,8 @@ import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,6 +36,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -103,6 +106,8 @@ fun LibraryScreen(vm: KaraokeViewModel, onNeedMic: (() -> Unit) -> Unit) {
         }
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
+            UpdateBanner(vm)
+
             vm.analyzing?.let { id ->
                 val name = vm.songs.firstOrNull { it.id == id }?.title ?: ""
                 Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -138,6 +143,64 @@ fun LibraryScreen(vm: KaraokeViewModel, onNeedMic: (() -> Unit) -> Unit) {
                             onDelete = { vm.deleteSong(song) }
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+/** Offers the new build when CI has published one. */
+@Composable
+private fun UpdateBanner(vm: KaraokeViewModel) {
+    val info = vm.update ?: return
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Aura.Violet.copy(alpha = 0.22f))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            "Versão ${info.versionName} disponível",
+            style = MaterialTheme.typography.titleMedium,
+            color = Aura.Teal
+        )
+        if (info.notes.isNotBlank()) {
+            Text(
+                info.notes,
+                style = MaterialTheme.typography.labelSmall,
+                color = Aura.Dim,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        if (vm.updateBusy) {
+            if (vm.updateProgress >= 0f) {
+                LinearProgressIndicator(
+                    progress = { vm.updateProgress },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Aura.Teal
+                )
+            } else {
+                LinearProgressIndicator(Modifier.fillMaxWidth(), color = Aura.Teal)
+            }
+            Text(
+                "Baixando…",
+                style = MaterialTheme.typography.labelSmall,
+                color = Aura.Dim
+            )
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { vm.installUpdate() },
+                    colors = ButtonDefaults.buttonColors(containerColor = Aura.Violet)
+                ) { Text("Atualizar") }
+                TextButton(onClick = { vm.dismissUpdate() }) {
+                    Text("Agora não", color = Aura.Dim)
                 }
             }
         }

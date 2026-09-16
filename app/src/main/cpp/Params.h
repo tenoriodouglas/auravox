@@ -51,6 +51,7 @@ enum ParamId {
     kVocoderMix,
     kVocoderCarrier,
     kVocoderSibilance,
+    kPitchGuide,
 
     // --- backing track: 48..63 ---
     kTrackGain = 48,

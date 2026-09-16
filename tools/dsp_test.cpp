@@ -9,6 +9,7 @@
 #include "test_common.h"
 
 #include "dsp/FxChain.h"
+#include "dsp/InputFifo.h"
 #include "dsp/Metronome.h"
 #include "dsp/Mixer.h"
 #include "dsp/PitchDetector.h"
@@ -33,6 +34,138 @@ static float measurePitch(const std::vector<float> &s, int sr) {
         if (d.push(s[i]) && d.voiced()) last = d.frequency();
     }
     return last;
+}
+
+// ----------------------------------------------------------------- captura
+
+static void testInputFifo() {
+    section("FIFO de captura");
+    InputFifo f;
+    f.prepare(64);
+    check(f.capacity() >= 64, "capacidade arredonda para potencia de dois",
+          fmtI("%d", f.capacity()));
+
+    float in[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    f.write(in, 8);
+    float out[8] = {0};
+    check(f.read(out, 8) && out[0] == 1.0f && out[7] == 8.0f, "ida e volta");
+    check(!f.read(out, 1), "leitura curta e recusada, nao inventada");
+
+    f.clear();
+    f.write(in, 4);
+    const int got = f.readPartial(out, 8);
+    check(got == 4 && out[4] == 0.0f && out[7] == 0.0f,
+          "leitura parcial completa com silencio", fmtI("%d quadros", got));
+
+    // Overflow drops the oldest, never the newest: the newest is what the
+    // singer just sang
+    f.clear();
+    std::vector<float> flood((size_t) f.capacity() + 16);
+    for (size_t i = 0; i < flood.size(); ++i) flood[i] = (float) i;
+    f.write(flood.data(), (int) flood.size());
+    f.skip(f.available() - 1);
+    float tail = 0.0f;
+    f.read(&tail, 1);
+    check(tail == (float) (flood.size() - 1), "overflow descarta o mais antigo",
+          fmt("%.0f", tail));
+}
+
+/**
+ * The static the app shipped with, reproduced and then fixed.
+ *
+ * Capture and playback run on the same sample clock but on different threads,
+ * so what wanders between callbacks is the phase, not the rate: cumulative
+ * production stays inside a bounded band instead of drifting away. Reading the
+ * stream straight into the block means zero-filling whatever has not landed
+ * yet, which splices silence into the middle of the voice several times a
+ * second.
+ *
+ * A counter as the signal makes it measurable: every sample the consumer sees
+ * has to be exactly one more than the last, forever.
+ */
+struct CaptureTrial { int tears; int silentBlocks; int cushion; };
+
+static CaptureTrial captureTrial(bool useFifo, float jitterBursts, int stallEvery) {
+    const int block = 192;
+    const int burst = 192;
+    const int blocks = 2000;
+
+    InputFifo fifo;
+    fifo.prepare(burst * 16);
+    FifoPolicy policy;
+    policy.configure(burst);
+
+    std::vector<float> chunk((size_t) burst * 8);
+    std::vector<float> outBlock((size_t) block);
+    double delivered = 0.0;
+    float counter = 1.0f;
+    int tears = 0, silentBlocks = 0;
+    float last = 0.0f;
+    bool started = false;
+    unsigned rng = 12345u;
+
+    for (int b = 0; b < blocks; ++b) {
+        rng = rng * 1103515245u + 12345u;
+        const float phase = (float) ((rng >> 16) & 0xFF) / 255.0f - 0.5f;
+
+        // Cumulative, not incremental: the two clocks agree on the long run
+        double target = (double) (b + 1) * block + phase * burst * jitterBursts;
+        // A scheduler stall delivers nothing now and everything next time
+        if (stallEvery > 0 && b % stallEvery == stallEvery - 1) target = delivered;
+
+        int ready = (int) (target - delivered);
+        if (ready < 0) ready = 0;
+        delivered += ready;
+
+        while (ready > 0) {
+            const int n = std::min(ready, (int) chunk.size());
+            for (int i = 0; i < n; ++i) chunk[(size_t) i] = counter++;
+            fifo.write(chunk.data(), n);
+            ready -= n;
+        }
+
+        if (useFifo) {
+            policy.trim(fifo, block);
+            if (!policy.serve(fifo, outBlock.data(), block)) { ++silentBlocks; continue; }
+        } else {
+            // What the app did before: take what is there, zero the rest
+            if (fifo.readPartial(outBlock.data(), block) < block) ++silentBlocks;
+        }
+
+        for (int i = 0; i < block; ++i) {
+            const float v = outBlock[(size_t) i];
+            if (started && v != last + 1.0f) ++tears;
+            last = v;
+            started = true;
+        }
+    }
+    return CaptureTrial{tears, silentBlocks, policy.cushion};
+}
+
+static void testCaptureContinuity() {
+    section("Continuidade da captura");
+
+    const CaptureTrial broken = captureTrial(false, 1.6f, 0);
+    const CaptureTrial fixed = captureTrial(true, 1.6f, 0);
+
+    check(broken.tears > 50, "o caminho antigo rasga o sinal o tempo todo",
+          fmtI("%d cortes sem FIFO", broken.tears));
+    check(fixed.tears == 0, "com FIFO o sinal fica continuo",
+          fmtI("%d cortes", fixed.tears));
+    check(fixed.silentBlocks <= 2, "so os blocos de escorva ficam mudos",
+          fmtI("%d blocos", fixed.silentBlocks));
+
+    // A device that jitters harder must settle, not tear forever
+    const CaptureTrial rough = captureTrial(true, 5.0f, 0);
+    check(rough.tears <= 2, "jitter alto se acomoda numa almofada maior",
+          fmtI2("%d cortes, almofada %d quadros", rough.tears, rough.cushion));
+    check(rough.cushion <= 192 * 4, "a almofada para de crescer",
+          fmtI("%d quadros", rough.cushion));
+
+    // One outright stall should cost one block, not the rest of the song
+    const CaptureTrial stalled = captureTrial(true, 1.6f, 500);
+    check(stalled.tears <= 6, "uma travada custa um bloco, nao a musica inteira",
+          fmtI("%d cortes", stalled.tears));
 }
 
 // ---------------------------------------------------------------- autotune
@@ -643,6 +776,8 @@ static void testCpu() {
 
 int main() {
     std::printf("\n\033[1mAuraVox DSP\033[0m\n");
+    testInputFifo();
+    testCaptureContinuity();
     testDetector();
     testPitchShift();
     testGhostPitch();

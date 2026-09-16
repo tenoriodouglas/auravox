@@ -13,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.auravox.audio.AudioDevices
 import com.auravox.audio.NativeAudio
 import com.auravox.audio.Param
 import com.auravox.audio.Preset
@@ -25,6 +26,8 @@ import com.auravox.karaoke.Song
 import com.auravox.karaoke.SongRepository
 import com.auravox.karaoke.Take
 import com.auravox.karaoke.TakeLayer
+import com.auravox.update.GithubUpdater
+import com.auravox.update.UpdateInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -84,6 +87,11 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     var recording by mutableStateOf(false); private set
     var sampleRate by mutableStateOf(0); private set
     var headphones by mutableStateOf(true); private set
+    var lowLatencyInput by mutableStateOf(true); private set
+
+    // --- microphone ---
+    var micOptions by mutableStateOf(listOf(AudioDevices.auto)); private set
+    var selectedMic by mutableStateOf(AudioDevices.auto); private set
 
     // --- meters, polled off the audio thread ---
     var voiceLevel by mutableStateOf(0f); private set
@@ -144,6 +152,11 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     var loopStartMs by mutableStateOf(0L); private set
     var loopEndMs by mutableStateOf(0L); private set
 
+    // --- updates ---
+    var update by mutableStateOf<UpdateInfo?>(null); private set
+    var updateProgress by mutableStateOf(-1f); private set
+    var updateBusy by mutableStateOf(false); private set
+
     // --- settings ---
     var countInBeats by mutableStateOf(4)
     var preset by mutableStateOf(Presets.default.label)
@@ -163,6 +176,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
         songs = repo.loadSongs()
         takes = repo.loadTakes()
+        checkForUpdate(silent = true)
 
         viewModelScope.launch {
             while (true) {
@@ -177,18 +191,63 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startEngine(): Boolean {
         if (engineRunning) return true
-        if (!NativeAudio.start()) {
+        if (!NativeAudio.start(selectedMic.id, selectedMic.needsCommunicationMode)) {
             message = "Não foi possível abrir o áudio. Conecte um fone com fio."
             return false
         }
         engineRunning = true
         sampleRate = NativeAudio.sampleRate()
+        lowLatencyInput = NativeAudio.inputIsLowLatency()
+        refreshMics()
+
         headphones = headphonesPresent()
-        if (!headphones) {
+        if (!headphones && monitorOn) {
             message = "Sem fone: o microfone vai captar a base e realimentar. " +
                 "Use fone com fio ou desligue o monitor."
         }
         return true
+    }
+
+    fun refreshMics() {
+        micOptions = AudioDevices.inputs(getApplication())
+        // The chosen device can vanish when a headset is unplugged
+        if (micOptions.none { it.id == selectedMic.id }) selectedMic = AudioDevices.auto
+    }
+
+    /**
+     * Switches the capture device, restarting the engine on the new one.
+     *
+     * A Bluetooth headset microphone needs the platform put into communication
+     * mode first, and that link takes a moment to come up, so this runs off
+     * the main thread and falls back when it never connects.
+     */
+    fun selectMic(option: AudioDevices.MicOption) {
+        viewModelScope.launch {
+            val wasRunning = engineRunning
+            if (wasRunning) stopEngine()
+
+            if (option.needsCommunicationMode) {
+                val ok = withContext(Dispatchers.IO) {
+                    AudioDevices.enableBluetooth(getApplication())
+                }
+                if (!ok) {
+                    selectedMic = AudioDevices.auto
+                    message = "O microfone Bluetooth não conectou. Voltando para o automático."
+                } else {
+                    selectedMic = option
+                    // Over Bluetooth the round trip is 150 to 300 ms: hearing
+                    // yourself that late is worse than not hearing yourself
+                    write(Param.MONITOR_VOICE, 0f)
+                    message = "Microfone Bluetooth ativo. O monitor foi desligado — " +
+                        "o atraso do Bluetooth torna impossível cantar se ouvindo."
+                }
+            } else {
+                withContext(Dispatchers.IO) { AudioDevices.disableBluetooth(getApplication()) }
+                selectedMic = option
+            }
+
+            if (wasRunning && startEngine() && screen == Screen.STAGE) reloadStage()
+        }
     }
 
     /**
@@ -200,6 +259,11 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun resumeIfNeeded() {
         if (screen != Screen.STAGE || engineRunning) return
+        reloadStage()
+    }
+
+    /** Reopens whatever the stage was on. The decoder dies with the engine. */
+    private fun reloadStage() {
         when (stageMode) {
             StageMode.SING -> current?.let { openSong(it) }
             StageMode.OVERDUB -> activeTake?.let { overdub(it) }
@@ -572,6 +636,60 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
     val monitorOn: Boolean get() = get(Param.MONITOR_VOICE) > 0.5f
 
+    // -------------------------------------------------------------- updates
+
+    /**
+     * Looks for a newer build. Silent on startup, spoken when the user asked.
+     */
+    fun checkForUpdate(silent: Boolean = false) {
+        viewModelScope.launch {
+            val found = GithubUpdater.check()
+            update = found
+            if (!silent) {
+                message = found?.let { "Versão ${it.versionName} disponível." }
+                    ?: "Você já está na versão mais recente."
+            }
+        }
+    }
+
+    /**
+     * Downloads the new build and hands it to the system installer.
+     *
+     * Android gates installing APKs per app, so a missing grant is sent to the
+     * settings screen rather than failing quietly.
+     */
+    fun installUpdate() {
+        val info = update ?: return
+        if (updateBusy) return
+
+        val context = getApplication<Application>()
+        if (!GithubUpdater.canInstall(context)) {
+            message = "Autorize a instalação de apps desta fonte e toque de novo."
+            GithubUpdater.openInstallPermissionSettings(context)
+            return
+        }
+
+        viewModelScope.launch {
+            updateBusy = true
+            updateProgress = 0f
+            var lastShown = 0f
+            val ok = GithubUpdater.downloadAndInstall(context, info) { p ->
+                // The callback fires per 64 KB chunk; hopping to the main
+                // thread for every one of them is hundreds of coroutines for a
+                // bar that moves in whole percent
+                if (p < 0f || p - lastShown >= 0.01f) {
+                    lastShown = p
+                    viewModelScope.launch(Dispatchers.Main) { updateProgress = p }
+                }
+            }
+            updateBusy = false
+            updateProgress = -1f
+            if (!ok) message = "Não foi possível baixar a atualização."
+        }
+    }
+
+    fun dismissUpdate() { update = null }
+
     // --------------------------------------------------------------- library
 
     fun importSong(uri: Uri) {
@@ -722,6 +840,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
             Param.DELAY_MIX, Param.DELAY_TIME_MS, Param.DELAY_FEEDBACK, Param.DELAY_PING_PONG,
             Param.REVERB_MIX, Param.REVERB_SIZE, Param.REVERB_DAMP, Param.REVERB_PRE_DELAY,
             Param.VOCAL_WIDTH, Param.VOCODER_MIX, Param.VOCODER_CARRIER, Param.VOCODER_SIBILANCE,
+            Param.PITCH_GUIDE,
             Param.TRACK_GAIN, Param.TRACK_KEY_SHIFT, Param.TRACK_TEMPO,
             Param.TRACK_VOCAL_REMOVE, Param.TRACK_DUCK, Param.TRACK_WIDTH,
             Param.LOOP_START_MS, Param.LOOP_END_MS, Param.LOOP_ENABLED,
@@ -732,6 +851,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         stopEngine()
+        AudioDevices.disableBluetooth(getApplication())
         NativeAudio.destroy()
         super.onCleared()
     }

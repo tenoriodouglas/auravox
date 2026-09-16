@@ -13,8 +13,10 @@ android {
         applicationId = "com.auravox"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        // CI passes the run number so every build is distinguishable and the
+        // self-updater can tell whether what is published is newer than this
+        versionCode = (System.getenv("VERSION_CODE") ?: "1").toInt()
+        versionName = "1.1"
 
         externalNativeBuild {
             cmake {
@@ -38,6 +40,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true   // the updater reads BuildConfig.VERSION_CODE
         prefab = true   // required to consume Oboe as a prefab package
     }
 
