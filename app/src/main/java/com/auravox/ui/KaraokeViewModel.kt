@@ -150,6 +150,18 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         return true
     }
 
+    /**
+     * Brings the stage back after the app returns to the foreground.
+     *
+     * onStop released the microphone and the decoder, so the take cannot be
+     * resumed mid-song; reopening the song is honest about that instead of
+     * leaving a dead transport on screen.
+     */
+    fun resumeIfNeeded() {
+        if (screen != Screen.STAGE || engineRunning) return
+        current?.let { openSong(it) }
+    }
+
     fun stopEngine() {
         if (recording) stopRecording()
         decoder.stop()
