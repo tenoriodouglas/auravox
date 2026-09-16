@@ -122,12 +122,22 @@ Java_com_auravox_audio_NativeAudio_nativeGetXruns(JNIEnv *, jobject) {
 // --- recording ---
 
 JNIEXPORT jboolean JNICALL
-Java_com_auravox_audio_NativeAudio_nativeStartRecording(JNIEnv *env, jobject, jstring jPath) {
+Java_com_auravox_audio_NativeAudio_nativeStartRecording(JNIEnv *env, jobject,
+                                                        jstring jMix, jstring jStem) {
     if (!gEngine) return JNI_FALSE;
-    const char *path = env->GetStringUTFChars(jPath, nullptr);
-    const bool ok = gEngine->startRecording(std::string(path));
-    env->ReleaseStringUTFChars(jPath, path);
+    const char *mix = env->GetStringUTFChars(jMix, nullptr);
+    const char *stem = jStem ? env->GetStringUTFChars(jStem, nullptr) : nullptr;
+    const bool ok = gEngine->startRecording(std::string(mix),
+                                            stem ? std::string(stem) : std::string());
+    env->ReleaseStringUTFChars(jMix, mix);
+    if (stem) env->ReleaseStringUTFChars(jStem, stem);
     return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+/** Song time the loaded source starts at. Non-zero for a bounced layer. */
+JNIEXPORT void JNICALL
+Java_com_auravox_audio_NativeAudio_nativeSetSongOffsetMs(JNIEnv *, jobject, jdouble ms) {
+    if (gEngine) gEngine->setSongOffsetMs(ms);
 }
 
 JNIEXPORT void JNICALL
@@ -263,13 +273,14 @@ Java_com_auravox_audio_NativeAudio_nativeGetScoreState(JNIEnv *env, jobject, jfl
 /**
  * Meters the performance screen polls every frame, in one transition:
  * level, output level, pitch midi, cents off, latency, align, position ms,
- * playing, finished, xruns, underruns, count-in beats left, output latency.
+ * playing, finished, xruns, underruns, count-in beats left, output latency,
+ * song ms and the loop wrap flag.
  */
 JNIEXPORT void JNICALL
 Java_com_auravox_audio_NativeAudio_nativeGetTransportState(JNIEnv *env, jobject, jfloatArray out) {
     if (!gEngine) return;
     auto &e = *gEngine;
-    float v[13];
+    float v[15];
     v[0] = e.chain().peakLevel();
     v[1] = e.outputLevel();
     v[2] = e.chain().pitchMidi();
@@ -283,7 +294,10 @@ Java_com_auravox_audio_NativeAudio_nativeGetTransportState(JNIEnv *env, jobject,
     v[10] = (float) e.player().underruns();
     v[11] = (float) e.metronome().beatsLeft();
     v[12] = e.outputLatencyMs();
-    env->SetFloatArrayRegion(out, 0, 13, v);
+    v[13] = (float) e.songMs();
+    // Reading clears it: exactly one poll sees a given wrap
+    v[14] = e.player().consumeLoopWrap() ? 1.0f : 0.0f;
+    env->SetFloatArrayRegion(out, 0, 15, v);
 }
 
 // --- offline analysis ---

@@ -46,8 +46,7 @@ class SongRepository(private val context: Context) {
         return runCatching {
             val array = JSONArray(takesFile.readText())
             (0 until array.length())
-                .map { takeFromJson(array.getJSONObject(it)) }
-                .filter { File(it.path).exists() }
+                .mapNotNull { takeFromJson(array.getJSONObject(it)) }
         }.getOrDefault(emptyList())
     }
 
@@ -57,8 +56,14 @@ class SongRepository(private val context: Context) {
         takesFile.writeText(array.toString())
     }
 
+    /** Removes every file the take owns, mixes and stems alike. */
     fun deleteTake(take: Take) {
-        File(take.path).delete()
+        take.layers.forEach { deleteLayer(it) }
+    }
+
+    fun deleteLayer(layer: TakeLayer) {
+        File(layer.mixPath).delete()
+        File(layer.stemPath).delete()
     }
 
     /**
@@ -152,21 +157,47 @@ class SongRepository(private val context: Context) {
         put("id", t.id)
         put("songId", t.songId)
         put("songTitle", t.songTitle)
-        put("path", t.path)
         put("score", t.score.toDouble())
         put("maxCombo", t.maxCombo)
-        put("durationMs", t.durationMs)
         put("recordedAt", t.recordedAt)
+        put("layers", JSONArray().apply {
+            t.layers.forEach { l ->
+                put(JSONObject().apply {
+                    put("id", l.id)
+                    put("mixPath", l.mixPath)
+                    put("stemPath", l.stemPath)
+                    put("startSongMs", l.startSongMs)
+                    put("durationMs", l.durationMs)
+                    put("recordedAt", l.recordedAt)
+                })
+            }
+        })
     }
 
-    private fun takeFromJson(o: JSONObject) = Take(
-        id = o.getString("id"),
-        songId = o.optString("songId"),
-        songTitle = o.optString("songTitle"),
-        path = o.optString("path"),
-        score = o.optDouble("score", 0.0).toFloat(),
-        maxCombo = o.optInt("maxCombo"),
-        durationMs = o.optLong("durationMs"),
-        recordedAt = o.optLong("recordedAt")
-    )
+    /** Null when the take has no layer whose file is still on disk. */
+    private fun takeFromJson(o: JSONObject): Take? {
+        val raw = o.optJSONArray("layers") ?: return null
+        val layers = (0 until raw.length()).map { i ->
+            val l = raw.getJSONObject(i)
+            TakeLayer(
+                id = l.optString("id"),
+                mixPath = l.optString("mixPath"),
+                stemPath = l.optString("stemPath"),
+                startSongMs = l.optDouble("startSongMs", 0.0),
+                durationMs = l.optLong("durationMs"),
+                recordedAt = l.optLong("recordedAt")
+            )
+        }.filter { File(it.mixPath).exists() }
+
+        if (layers.isEmpty()) return null
+        return Take(
+            id = o.getString("id"),
+            songId = o.optString("songId"),
+            songTitle = o.optString("songTitle"),
+            layers = layers,
+            score = o.optDouble("score", 0.0).toFloat(),
+            maxCombo = o.optInt("maxCombo"),
+            recordedAt = o.optLong("recordedAt")
+        )
+    }
 }

@@ -17,6 +17,10 @@ nativa em C++.
 | **Remoção de vocal por banda** | Cancela o centro só na faixa da voz. Grave e pratos ficam inteiros — L−R puro é o que deixa karaokê caseiro com som oco. |
 | **Letra sincronizada** | LRC simples e estendido. Com marcação por palavra o destaque anda pela linha em vez de pular. |
 | **Contagem sample-accurate** | O metrônomo é gerado na thread de áudio, então a base entra exatamente no tempo forte. |
+| **Camadas por bounce** | Cada passada grava a mixagem completa, e a camada seguinte canta por cima desse arquivo. Empilhar sai de graça: não importa se são duas vozes ou dez, o custo é sempre uma faixa. |
+| **Loop A–B com andamento** | Marque o trecho, baixe o andamento e repita até acertar. Nenhum processador vocal tem motivo para ter isso; um app de karaokê tem. |
+| **Vocoder e talkbox** | A voz vira filtro. A portadora é um sintetizador afinado na nota cantada ou a própria base — aí a música fala a letra. |
+| **Ouvir, exportar e compartilhar** | Toca no próprio app, salva em Música/AuraVox e compartilha por FileProvider. |
 
 ## Baixar e instalar
 
@@ -48,9 +52,10 @@ Compose ──setParam(id, valor)──▶ JNI ──▶ ParamStore (std::atomic
         ◀──nível, pitch, nota, score, posição──          │
                                                 ┌────────┴────────┐
                                                 ▼                 ▼
-  Oboe input ──▶ callback do output ──▶ FxChain          TrackPlayer
-  (VoicePerformance)         │        (voz estéreo)    (WSOLA + resampler)
-                             │              │                 │
+  Oboe input ──▶ callback do output ──▶ TrackPlayer ──▶ FxChain
+  (VoicePerformance)         │        (WSOLA + resampler)  (voz estéreo,
+                             │              │               vocoder usa a
+                             │              │               base como portadora)
                              │              └────▶ Mixer ◀────┘
                              │                    │     │
                              │              monitor      take (base atrasada)
@@ -76,6 +81,7 @@ latência.
 | `cpp/dsp/VocalRemover.h` | Cancelamento de centro limitado à banda da voz |
 | `cpp/dsp/Mixer.h` | Monitor, take alinhado, ducking, limiter |
 | `cpp/dsp/Metronome.h` | Contagem que entrega o downbeat exato |
+| `cpp/dsp/Vocoder.h` | Banco de 16 bandas, portadora de síntese ou da base |
 | `cpp/dsp/Spatial.h` | Reverb estéreo, delay ping-pong, doubler |
 | `cpp/dsp/Dynamics.h` | Gate, compressor, de-esser, limiter, EQ, ducker |
 | `cpp/track/TrackPlayer.h` | Playhead, ring do decoder, ganho, remoção de vocal |
@@ -85,7 +91,30 @@ latência.
 | `kotlin/audio/TrackDecoder.kt` | Streaming para o ring, com backpressure |
 | `kotlin/audio/SongAnalyzer.kt` | Decodifica, reduz para 11 kHz mono, chama a análise |
 | `kotlin/karaoke/Lrc.kt` | LRC simples e estendido |
+| `kotlin/karaoke/Exporter.kt` | FileProvider e MediaStore |
 | `kotlin/ui/widget/PitchLane.kt` | O piano roll rolando |
+
+## Camadas sem custo
+
+Gravar a segunda voz não guarda a primeira em memória nem monta um mixer
+offline. Cada passada escreve dois arquivos:
+
+- **mix** — tudo que estava tocando mais a voz nova
+- **voz** — só a voz processada, para ouvir separada ou aproveitar depois
+
+A camada seguinte simplesmente toca o **mix** da anterior como base. O custo de
+empilhar é sempre o de uma faixa, e desfazer é voltar um arquivo — nada é
+destruído até o take inteiro ser apagado.
+
+O detalhe que faz funcionar: o take carrega a base já atrasada pela latência
+medida, então o primeiro quadro do arquivo pertence a um instante da música
+**anterior** ao playhead que o gravou. Esse deslocamento é guardado por camada
+e reaplicado na reprodução — sem ele a letra e o piano roll da segunda camada
+correm adiantados por um round trip inteiro.
+
+Uma consequência: **o andamento trava** quando existem camadas. Esticar a base
+esticaria junto a voz já gravada, e a versão disso que alguém iria querer não
+existe. Mudar o tom continua liberado — ele move a mixagem inteira de uma vez.
 
 ## Como o PSOLA funciona aqui
 
@@ -119,7 +148,7 @@ tools/run_tests.sh
 ```
 
 Roda no host, sem Android: `dsp/`, `track/` e `karaoke/` não dependem de nada
-além da biblioteca padrão. 62 checagens, entre elas:
+além da biblioteca padrão. 68 checagens, entre elas:
 
 ```
 PSOLA pitch shift          -12 a +12 semitons, erro 0.0 cents
@@ -129,8 +158,13 @@ Remoção de vocal           voz central -32 dB, grave -0.2 dB
 Alinhamento da gravação    base e voz no mesmo frame no take
 Pontuação                  60 ms de latência não custa ponto
 Análise                    frase em dó maior: 7/7 notas, tom e 120 BPM
+Vocoder                    saída canta a portadora, 46 dB acima da voz
+Monitor desligado          fone em silêncio, take com a voz inteira
 Pior caso                  3.2% de tempo real em x86
 ```
+
+No GitHub esses testes rodam antes do APK: se o DSP quebrou, não existe build
+para baixar.
 
 Em ARM conte com 5 a 8x isso — ainda folgado.
 
@@ -172,6 +206,13 @@ Quebrar qualquer uma gera estalo:
 
 - **Entrada mono.** A saída é estéreo; o microfone é um só e a cadeia vocal
   roda em mono até a colocação estéreo.
+- **Camada não tem volume próprio depois de gravada.** O bounce é o preço da
+  simplicidade: para mudar o equilíbrio entre as vozes, desfaça a camada e
+  grave de novo. Em compensação empilhar não tem limite nem custo de memória.
+- **Andamento travado com camadas.** Explicado acima.
+- **Exportar para Música precisa de Android 10.** Abaixo disso a pasta pública
+  exige uma permissão em tempo de execução que o app não pede; use
+  Compartilhar.
 - **PSOLA acima de uma oitava fica sujo.** O resíduo depende de
   `espaçamento mod período`: ele é pior onde isso cai em meio período, que é
   exatamente uma oitava acima e uma quinta abaixo. Nos dois casos o resíduo cai
@@ -191,7 +232,10 @@ Quebrar qualquer uma gera estalo:
 1. **Tap-to-sync de letra** dentro do app, para quem não acha o `.lrc`
 2. **Separação de fontes** no lugar do cancelamento de centro, para tirar
    vocal de mixagem moderna sem furo no meio
-3. **Viterbi na trajetória de pitch** da análise, para matar o resto dos erros
+3. **Mixagem offline** das camadas, para dar volume e mudo por voz sem abrir
+   mão do custo constante do bounce
+4. **Punch-in** para regravar só um trecho dentro de uma camada
+5. **Viterbi na trajetória de pitch** da análise, para matar o resto dos erros
    de oitava na extração de melodia
-4. **Dueto** com duas trilhas de melodia e pontuação separada por cantor
-5. **Vídeo** junto com o take
+6. **Dueto** com duas trilhas de melodia e pontuação separada por cantor
+7. **Vídeo** junto com o take

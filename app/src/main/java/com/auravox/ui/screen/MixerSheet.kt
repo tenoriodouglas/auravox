@@ -154,6 +154,23 @@ private fun VoiceTab(vm: KaraokeViewModel) {
     ParamSlider(vm, Param.HARMONY_3, "Voz 3", -7f, 7f, steps = 13) { degree(it) }
     ParamSlider(vm, Param.HARMONY_SPREAD, "Abertura", 0f, 1f) { "${(it * 100).roundToInt()}%" }
 
+    Header("Vocoder")
+    Note(
+        "A voz vira o filtro e outra coisa vira o som. Com portadora na base, " +
+            "é talkbox: a música fala a letra."
+    )
+    ParamSlider(vm, Param.VOCODER_MIX, "Quantidade", 0f, 1f) { "${(it * 100).roundToInt()}%" }
+    ParamSlider(vm, Param.VOCODER_CARRIER, "Sintetizador ↔ base", 0f, 1f) {
+        when {
+            it < 0.15f -> "sintetizador"
+            it > 0.85f -> "base"
+            else -> "mistura"
+        }
+    }
+    ParamSlider(vm, Param.VOCODER_SIBILANCE, "Consoantes", 0f, 1f) {
+        "${(it * 100).roundToInt()}%"
+    }
+
     Header("Doubler")
     ParamSlider(vm, Param.DOUBLER_MIX, "Nível", 0f, 1f) { "${(it * 100).roundToInt()}%" }
     ParamSlider(vm, Param.DOUBLER_DETUNE, "Variação", 0f, 1f) { "${(it * 100).roundToInt()}%" }
@@ -181,6 +198,9 @@ private fun PlaybackTab(vm: KaraokeViewModel) {
     ParamSlider(vm, Param.TRACK_VOCAL_REMOVE, "Remoção", 0f, 1f) {
         "${(it * 100).roundToInt()}%"
     }
+
+    Header("Estudo")
+    Note("Marque A e B no transporte para repetir um trecho. Baixe o andamento até acertar e volte subindo.")
 
     Header("Espaço")
     ParamSlider(vm, Param.TRACK_DUCK, "Abaixar quando eu cantar", 0f, 1f) {
@@ -247,6 +267,9 @@ private fun SettingsTab(vm: KaraokeViewModel) {
     }
 
     Header("Geral")
+    ParamSlider(vm, Param.MONITOR_VOICE, "Ouvir a própria voz", 0f, 1f) {
+        if (it > 0.5f) "ligado" else "desligado"
+    }
     ParamSlider(vm, Param.MASTER_GAIN, "Volume geral", 0f, 1.5f) { "%.2f".format(it) }
     ParamSlider(vm, Param.INPUT_GAIN, "Ganho do microfone", 0f, 4f) { "%.2f".format(it) }
 

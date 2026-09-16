@@ -48,6 +48,9 @@ enum ParamId {
     kReverbDamp,
     kReverbPreDelay,
     kVocalWidth,
+    kVocoderMix,
+    kVocoderCarrier,
+    kVocoderSibilance,
 
     // --- backing track: 48..63 ---
     kTrackGain = 48,
@@ -56,11 +59,15 @@ enum ParamId {
     kTrackVocalRemove,
     kTrackDuck,
     kTrackWidth,
+    kLoopStartMs,
+    kLoopEndMs,
+    kLoopEnabled,
 
     // --- master and transport: 64..79 ---
     kMasterGain = 64,
     kLatencyTrimMs,
     kMetronomeGain,
+    kMonitorVoice,
 
     kParamCount = 80
 };

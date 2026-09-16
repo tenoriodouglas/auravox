@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -15,8 +14,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.HeadsetOff
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tune
@@ -28,6 +30,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -42,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.auravox.audio.Param
 import com.auravox.ui.Aura
 import com.auravox.ui.KaraokeViewModel
 import com.auravox.ui.widget.ComboBadge
@@ -58,6 +62,7 @@ fun StageScreen(vm: KaraokeViewModel) {
     val song = vm.current ?: return
     val range = remember(song.id) { song.midiRange() }
     var scrubbing by remember { mutableStateOf<Float?>(null) }
+    val listening = vm.stageMode == KaraokeViewModel.StageMode.PLAYBACK
 
     Scaffold(
         containerColor = Aura.Background,
@@ -78,16 +83,32 @@ fun StageScreen(vm: KaraokeViewModel) {
                         )
                         Text(
                             buildString {
+                                append(
+                                    when (vm.stageMode) {
+                                        KaraokeViewModel.StageMode.OVERDUB ->
+                                            "camada ${(vm.activeTake?.layerCount ?: 0) + 1} · "
+                                        KaraokeViewModel.StageMode.PLAYBACK -> "ouvindo · "
+                                        else -> ""
+                                    }
+                                )
                                 append(song.keyLabel)
-                                val shift = vm.get(com.auravox.audio.Param.TRACK_KEY_SHIFT).roundToInt()
+                                val shift = vm.get(Param.TRACK_KEY_SHIFT).roundToInt()
                                 if (shift != 0) append("  ${if (shift > 0) "+" else ""}$shift")
                             },
                             style = MaterialTheme.typography.labelSmall,
-                            color = Aura.Dim
+                            color = if (vm.stageMode == KaraokeViewModel.StageMode.SING)
+                                Aura.Dim else Aura.Teal
                         )
                     }
                 },
                 actions = {
+                    IconButton(onClick = { vm.toggleMonitor() }) {
+                        Icon(
+                            if (vm.monitorOn) Icons.Filled.Headphones else Icons.Filled.HeadsetOff,
+                            contentDescription = "Monitor",
+                            tint = if (vm.monitorOn) Aura.Teal else Aura.Dim
+                        )
+                    }
                     IconButton(onClick = { vm.showMixer = true }) {
                         Icon(Icons.Filled.Tune, contentDescription = "Mixer", tint = Aura.Teal)
                     }
@@ -107,7 +128,7 @@ fun StageScreen(vm: KaraokeViewModel) {
                     heardMs = vm.heardMs,
                     trail = vm.trail,
                     trailVersion = vm.trailVersion,
-                    liveMidi = vm.pitchMidi,
+                    liveMidi = if (listening) -1f else vm.pitchMidi,
                     targetMidi = vm.targetMidi,
                     accuracy = vm.liveAccuracy,
                     modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)
@@ -143,7 +164,7 @@ fun StageScreen(vm: KaraokeViewModel) {
                 modifier = Modifier.padding(vertical = 10.dp)
             )
 
-            Transport(vm, vm.trackDurationMs, scrubbing) { scrubbing = it }
+            Transport(vm, listening, scrubbing) { scrubbing = it }
         }
     }
 }
@@ -174,10 +195,53 @@ private fun ScoreHeader(vm: KaraokeViewModel) {
     }
 }
 
+/**
+ * Practice loop.
+ *
+ * A and B mark the passage; the transport jumps back to A every time the
+ * playhead reaches B. Combined with the tempo control in the mixer, this is
+ * how a hard run gets learned, and it is the part a vocal effects app has no
+ * reason to have.
+ */
+@Composable
+private fun LoopBar(vm: KaraokeViewModel) {
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        TextButton(onClick = { vm.markLoopStart() }) {
+            Text("A", color = Aura.Teal, style = MaterialTheme.typography.titleMedium)
+        }
+        TextButton(onClick = { vm.markLoopEnd() }) {
+            Text("B", color = Aura.Teal, style = MaterialTheme.typography.titleMedium)
+        }
+        IconButton(onClick = { vm.toggleLoop() }) {
+            Icon(
+                Icons.Filled.Repeat,
+                contentDescription = "Repetir trecho",
+                tint = if (vm.loopEnabled) Aura.Amber else Aura.Dim
+            )
+        }
+        Text(
+            if (vm.loopEndMs > vm.loopStartMs)
+                "${clock(vm.loopStartMs)} – ${clock(vm.loopEndMs)}" else "trecho",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (vm.loopEnabled) Aura.Amber else Aura.Dim,
+            modifier = Modifier.weight(1f)
+        )
+        if (vm.loopEndMs > vm.loopStartMs) {
+            TextButton(onClick = { vm.clearLoop() }) {
+                Text("limpar", style = MaterialTheme.typography.labelSmall, color = Aura.Dim)
+            }
+        }
+    }
+}
+
 @Composable
 private fun Transport(
     vm: KaraokeViewModel,
-    durationMs: Long,
+    listening: Boolean,
     scrubbing: Float?,
     onScrub: (Float?) -> Unit
 ) {
@@ -186,17 +250,18 @@ private fun Transport(
             .fillMaxWidth()
             .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
             .background(Aura.Surface)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        val total = durationMs.coerceAtLeast(1L)
-        val fraction = scrubbing ?: (vm.heardMs / total).toFloat().coerceIn(0f, 1f)
+        val total = vm.trackDurationMs.coerceAtLeast(1L)
+        val elapsed = (vm.heardMs - vm.sourceStartMs).coerceAtLeast(0.0)
+        val fraction = scrubbing ?: (elapsed / total).toFloat().coerceIn(0f, 1f)
 
         Slider(
             value = fraction,
             onValueChange = { onScrub(it) },
             onValueChangeFinished = {
-                scrubbing?.let { vm.seekTo((it * total).toLong()) }
+                scrubbing?.let { vm.seekTo((it * total + vm.sourceStartMs).toLong()) }
                 onScrub(null)
             },
             colors = SliderDefaults.colors(
@@ -206,21 +271,12 @@ private fun Transport(
             )
         )
 
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                clock(vm.heardMs.toLong()),
-                style = MaterialTheme.typography.labelSmall,
-                color = Aura.Dim
-            )
-            Text(
-                clock(durationMs),
-                style = MaterialTheme.typography.labelSmall,
-                color = Aura.Dim
-            )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(clock(elapsed.toLong()), style = MaterialTheme.typography.labelSmall, color = Aura.Dim)
+            Text(clock(total), style = MaterialTheme.typography.labelSmall, color = Aura.Dim)
         }
+
+        LoopBar(vm)
 
         Row(
             Modifier.fillMaxWidth(),
@@ -240,7 +296,7 @@ private fun Transport(
         }
 
         Row(
-            Modifier.fillMaxWidth().padding(top = 4.dp),
+            Modifier.fillMaxWidth().padding(top = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
@@ -249,10 +305,7 @@ private fun Transport(
             }
 
             Box(
-                Modifier
-                    .size(64.dp)
-                    .clip(CircleShape)
-                    .background(Aura.Violet),
+                Modifier.size(64.dp).clip(CircleShape).background(Aura.Violet),
                 contentAlignment = Alignment.Center
             ) {
                 IconButton(onClick = { vm.togglePlay() }, modifier = Modifier.size(64.dp)) {
@@ -265,19 +318,25 @@ private fun Transport(
                 }
             }
 
-            Box(
-                Modifier
-                    .size(52.dp)
-                    .clip(CircleShape)
-                    .background(if (vm.recording) Aura.Pink else Aura.SurfaceHigh),
-                contentAlignment = Alignment.Center
-            ) {
-                IconButton(onClick = { vm.toggleRecording() }, modifier = Modifier.size(52.dp)) {
-                    Icon(
-                        if (vm.recording) Icons.Filled.Stop else Icons.Filled.FiberManualRecord,
-                        contentDescription = "Gravar",
-                        tint = if (vm.recording) Color.White else Aura.Pink
-                    )
+            if (listening) {
+                // Nothing to record while listening back; the slot stays so the
+                // play button does not jump sideways between modes
+                Box(Modifier.size(52.dp))
+            } else {
+                Box(
+                    Modifier
+                        .size(52.dp)
+                        .clip(CircleShape)
+                        .background(if (vm.recording) Aura.Pink else Aura.SurfaceHigh),
+                    contentAlignment = Alignment.Center
+                ) {
+                    IconButton(onClick = { vm.toggleRecording() }, modifier = Modifier.size(52.dp)) {
+                        Icon(
+                            if (vm.recording) Icons.Filled.Stop else Icons.Filled.FiberManualRecord,
+                            contentDescription = "Gravar",
+                            tint = if (vm.recording) Color.White else Aura.Pink
+                        )
+                    }
                 }
             }
         }

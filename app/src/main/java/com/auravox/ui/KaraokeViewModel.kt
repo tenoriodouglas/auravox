@@ -1,7 +1,10 @@
 package com.auravox.ui
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.compose.runtime.getValue
@@ -17,9 +20,11 @@ import com.auravox.audio.Presets
 import com.auravox.audio.ScaleType
 import com.auravox.audio.SongAnalyzer
 import com.auravox.audio.TrackDecoder
+import com.auravox.karaoke.Exporter
 import com.auravox.karaoke.Song
 import com.auravox.karaoke.SongRepository
 import com.auravox.karaoke.Take
+import com.auravox.karaoke.TakeLayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -42,6 +47,15 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
     enum class Screen { LIBRARY, STAGE, RESULT, TAKES }
 
+    /**
+     * What the stage is doing.
+     *
+     * SING plays the song, OVERDUB plays the last take so a new voice stacks
+     * on top of it, PLAYBACK just listens. All three share one screen because
+     * they are the same transport over a different source.
+     */
+    enum class StageMode { SING, OVERDUB, PLAYBACK }
+
     private val repo = SongRepository(app)
     private val decoder = TrackDecoder(app)
 
@@ -53,6 +67,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- navigation ---
     var screen by mutableStateOf(Screen.LIBRARY); private set
+    var stageMode by mutableStateOf(StageMode.SING); private set
     var showMixer by mutableStateOf(false)
     var message by mutableStateOf<String?>(null)
 
@@ -60,6 +75,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     var songs by mutableStateOf<List<Song>>(emptyList()); private set
     var takes by mutableStateOf<List<Take>>(emptyList()); private set
     var current by mutableStateOf<Song?>(null); private set
+    var activeTake by mutableStateOf<Take?>(null); private set
     var analyzing by mutableStateOf<String?>(null); private set
     var analyzeProgress by mutableStateOf(0f); private set
 
@@ -67,6 +83,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     var engineRunning by mutableStateOf(false); private set
     var recording by mutableStateOf(false); private set
     var sampleRate by mutableStateOf(0); private set
+    var headphones by mutableStateOf(true); private set
 
     // --- meters, polled off the audio thread ---
     var voiceLevel by mutableStateOf(0f); private set
@@ -76,7 +93,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     var latencyMs by mutableStateOf(0f); private set
     var alignMs by mutableStateOf(0f); private set
     var outputLatencyMs by mutableStateOf(0f); private set
-    var positionMs by mutableStateOf(0.0); private set
+    var songPositionMs by mutableStateOf(0.0); private set
     var playing by mutableStateOf(false); private set
     var countInBeatsLeft by mutableStateOf(0); private set
     var xruns by mutableStateOf(0); private set
@@ -87,7 +104,10 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
      * are drawn against this, not against the playhead: what the mixer wrote
      * this instant is still queued in the output buffer.
      */
-    val heardMs: Double get() = positionMs - outputLatencyMs
+    val heardMs: Double get() = songPositionMs - outputLatencyMs
+
+    /** Song time the loaded file begins at. Non-zero when playing a take. */
+    val sourceStartMs: Double get() = activeTake?.startSongMs ?: 0.0
 
     /**
      * Song length in ms. The container knows it as soon as the file opens, so
@@ -111,6 +131,11 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     var targetMidi by mutableStateOf(-1f); private set
     var liveAccuracy by mutableStateOf(0f); private set
 
+    // --- practice loop ---
+    var loopEnabled by mutableStateOf(false); private set
+    var loopStartMs by mutableStateOf(0L); private set
+    var loopEndMs by mutableStateOf(0L); private set
+
     // --- settings ---
     var countInBeats by mutableStateOf(4)
     var preset by mutableStateOf(Presets.default.label)
@@ -118,6 +143,10 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Mirror of the native parameter values, so sliders have something to read. */
     private val params = mutableStateMapOf<Int, Float>()
+
+    private var pendingMixPath: String? = null
+    private var pendingStemPath: String? = null
+    private var recordStartSongMs = 0.0
 
     init {
         NativeAudio.create()
@@ -146,7 +175,11 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         }
         engineRunning = true
         sampleRate = NativeAudio.sampleRate()
-        message = null
+        headphones = headphonesPresent()
+        if (!headphones) {
+            message = "Sem fone: o microfone vai captar a base e realimentar. " +
+                "Use fone com fio ou desligue o monitor."
+        }
         return true
     }
 
@@ -154,12 +187,16 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
      * Brings the stage back after the app returns to the foreground.
      *
      * onStop released the microphone and the decoder, so the take cannot be
-     * resumed mid-song; reopening the song is honest about that instead of
+     * resumed mid-song; reopening the source is honest about that instead of
      * leaving a dead transport on screen.
      */
     fun resumeIfNeeded() {
         if (screen != Screen.STAGE || engineRunning) return
-        current?.let { openSong(it) }
+        when (stageMode) {
+            StageMode.SING -> current?.let { openSong(it) }
+            StageMode.OVERDUB -> activeTake?.let { overdub(it) }
+            StageMode.PLAYBACK -> activeTake?.let { playTake(it) }
+        }
     }
 
     fun stopEngine() {
@@ -170,6 +207,17 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         playing = false
     }
 
+    private fun headphonesPresent(): Boolean = runCatching {
+        val am = getApplication<Application>()
+            .getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+            it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                it.type == AudioDeviceInfo.TYPE_USB_DEVICE
+        }
+    }.getOrDefault(true)
+
     private fun poll() {
         NativeAudio.transportState(transport)
         voiceLevel = transport[NativeAudio.T.VOICE_LEVEL]
@@ -179,13 +227,21 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         latencyMs = transport[NativeAudio.T.LATENCY_MS]
         alignMs = transport[NativeAudio.T.ALIGN_MS]
         outputLatencyMs = transport[NativeAudio.T.OUT_LATENCY_MS]
-        positionMs = transport[NativeAudio.T.POSITION_MS].toDouble()
+        songPositionMs = transport[NativeAudio.T.SONG_MS].toDouble()
         countInBeatsLeft = transport[NativeAudio.T.COUNT_IN].toInt()
         xruns = transport[NativeAudio.T.XRUNS].toInt()
         underruns = transport[NativeAudio.T.UNDERRUNS].toInt()
 
         val nowPlaying = transport[NativeAudio.T.PLAYING] > 0.5f
         val finished = transport[NativeAudio.T.FINISHED] > 0.5f
+
+        // Reading the flag clears it natively, so exactly one poll acts on it
+        if (transport[NativeAudio.T.LOOP_WRAP] > 0.5f) {
+            seekTo(loopStartMs)
+            startPlayback(countIn = false)
+            playing = true
+            return
+        }
 
         if (screen == Screen.STAGE) {
             NativeAudio.scoreState(scoreBuf)
@@ -201,13 +257,13 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
             // The singer is answering what they heard, so their pitch belongs
             // where the playhead was a round trip ago, not where it is now
-            if (nowPlaying) {
-                trail.push(positionMs - alignMs, pitchMidi)
+            if (nowPlaying && stageMode != StageMode.PLAYBACK) {
+                trail.push(songPositionMs - alignMs, pitchMidi)
                 trailVersion = trail.version
             }
         }
 
-        if (playing && !nowPlaying && finished) onSongFinished()
+        if (playing && !nowPlaying && finished) onSourceFinished()
         playing = nowPlaying
     }
 
@@ -216,23 +272,74 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     fun openSong(song: Song) {
         if (!startEngine()) return
         current = song
+        activeTake = null
+        stageMode = StageMode.SING
+        NativeAudio.setSongOffsetMs(0.0)
+        set(Param.MONITOR_VOICE, 1f)
+        loadSource(Uri.parse(song.uri), song)
+    }
+
+    /** Stacks a new voice on top of a take. The take's mix becomes the base. */
+    fun overdub(take: Take) {
+        val song = songs.firstOrNull { it.id == take.songId }
+        if (song == null) {
+            message = "A música dessa gravação não está mais na biblioteca."
+            return
+        }
+        if (!startEngine()) return
+
+        current = song
+        activeTake = take
+        stageMode = StageMode.OVERDUB
+        // Tempo has to stay put: the voice already on tape would stretch with
+        // the track and stop lining up with the melody
+        write(Param.TRACK_TEMPO, 1f)
+        set(Param.MONITOR_VOICE, 1f)
+        NativeAudio.setSongOffsetMs(take.startSongMs)
+        loadSource(Uri.fromFile(File(take.path)), song)
+    }
+
+    /** Listens back without the microphone in the way. */
+    fun playTake(take: Take) {
+        // The take outlives the song it came from, so a placeholder stands in
+        // when the library entry is gone: no melody guide, but it still plays
+        val song = songs.firstOrNull { it.id == take.songId } ?: Song(
+            id = take.songId,
+            title = take.songTitle,
+            artist = "",
+            uri = "",
+            durationMs = take.durationMs
+        )
+        if (!startEngine()) return
+
+        current = song
+        activeTake = take
+        stageMode = StageMode.PLAYBACK
+        set(Param.MONITOR_VOICE, 0f)
+        NativeAudio.setSongOffsetMs(take.startSongMs)
+        loadSource(Uri.fromFile(File(take.path)), song)
+        startPlayback()
+    }
+
+    private fun loadSource(uri: Uri, song: Song?) {
         screen = Screen.STAGE
         trail.clear()
         trailVersion = trail.version
 
-        if (!decoder.start(Uri.parse(song.uri))) {
+        if (!decoder.start(uri)) {
             message = "Formato não suportado."
             screen = Screen.LIBRARY
             return
         }
 
-        NativeAudio.setMelody(if (song.hasMelody) song.notes else null)
-        NativeAudio.setScoringEnabled(song.hasMelody)
+        val scoring = song != null && song.hasMelody && stageMode != StageMode.PLAYBACK
+        NativeAudio.setMelody(if (song?.hasMelody == true) song.notes else null)
+        NativeAudio.setScoringEnabled(scoring)
         NativeAudio.resetScore()
 
         // Lock the autotune to the key the analysis found, so snapping helps
         // instead of fighting the song
-        if (song.analyzed && song.keyConfidence > 0.1f) {
+        if (song != null && song.analyzed && song.keyConfidence > 0.1f) {
             set(Param.KEY_ROOT, song.keyRoot.toFloat())
             set(
                 Param.SCALE,
@@ -246,8 +353,9 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         if (recording) stopRecording()
         NativeAudio.trackPause()
         decoder.stop()
+        set(Param.MONITOR_VOICE, 1f)
         screen = Screen.LIBRARY
-        current = null
+        activeTake = null
     }
 
     fun togglePlay() {
@@ -259,8 +367,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun startPlayback() {
-        val song = current ?: return
+    private fun startPlayback(countIn: Boolean = true) {
         viewModelScope.launch {
             // Starting on an empty ring costs the first bar of the song
             var waited = 0
@@ -268,24 +375,28 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
                 delay(20)
                 waited += 20
             }
-            val bpm = if (song.bpm > 40f) song.bpm else 100f
-            NativeAudio.trackPlay(bpm, countInBeats)
+            val bpm = current?.bpm?.takeIf { it > 40f } ?: 100f
+            // A count-in only makes sense when someone is about to sing
+            val beats = if (!countIn || stageMode == StageMode.PLAYBACK) 0 else countInBeats
+            NativeAudio.trackPlay(bpm, beats)
         }
     }
 
     fun restart() {
-        decoder.seek(0)
+        seekTo(if (loopEnabled) loopStartMs else 0L)
         NativeAudio.resetScore()
-        trail.clear()
-        trailVersion = trail.version
         resetMeters()
         startPlayback()
     }
 
     fun seekTo(ms: Long) {
-        if (current == null || decoder.sampleRate <= 0) return
+        if (decoder.sampleRate <= 0) return
+        // The source can start before the song does, so song time is shifted
+        // back into file time before seeking
+        val offset = activeTake?.startSongMs ?: 0.0
+        val fileMs = (ms - offset).coerceAtLeast(0.0)
         val last = maxOf(0L, decoder.totalFrames - 1)
-        val frame = (ms * decoder.sampleRate / 1000L).coerceIn(0L, last)
+        val frame = ((fileMs * decoder.sampleRate) / 1000.0).toLong().coerceIn(0L, last)
         decoder.seek(frame)
         NativeAudio.resetScore()
         trail.clear()
@@ -295,11 +406,14 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     private fun resetMeters() {
         score = 0f; combo = 0; maxCombo = 0
         perfect = 0; great = 0; good = 0; miss = 0
-        positionMs = 0.0
     }
 
-    private fun onSongFinished() {
+    private fun onSourceFinished() {
         if (recording) stopRecording()
+        if (stageMode == StageMode.PLAYBACK) {
+            playing = false
+            return
+        }
         screen = Screen.RESULT
         current?.let { song ->
             val better = maxOf(song.bestScore, score)
@@ -310,55 +424,147 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     // ------------------------------------------------------------- recording
 
     fun toggleRecording() {
+        if (stageMode == StageMode.PLAYBACK) return
         if (recording) stopRecording() else startRecording()
     }
 
     private fun startRecording() {
         if (!engineRunning) return
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-        val file = File(repo.takesDir, "auravox-$stamp.wav")
-        if (NativeAudio.startRecording(file.absolutePath)) {
-            pendingTakePath = file.absolutePath
-            recording = true
-        } else {
-            message = "Falha ao iniciar a gravação."
-        }
-    }
+        val mix = File(repo.takesDir, "auravox-$stamp.wav")
+        val stem = File(repo.takesDir, "auravox-$stamp-voz.wav")
 
-    private var pendingTakePath: String? = null
+        if (!NativeAudio.startRecording(mix.absolutePath, stem.absolutePath)) {
+            message = "Falha ao iniciar a gravação."
+            return
+        }
+        pendingMixPath = mix.absolutePath
+        pendingStemPath = stem.absolutePath
+        // Read the playhead now rather than trusting the last poll: at 60 Hz
+        // that is up to 16 ms of offset baked into the take forever.
+        // The take carries the track already delayed, so its first frame
+        // belongs one alignment earlier in the song than the playhead reads.
+        NativeAudio.transportState(transport)
+        recordStartSongMs = transport[NativeAudio.T.SONG_MS].toDouble() -
+            transport[NativeAudio.T.ALIGN_MS]
+        recording = true
+    }
 
     private fun stopRecording() {
         NativeAudio.stopRecording()
         recording = false
-        val path = pendingTakePath ?: return
-        pendingTakePath = null
+
+        val mixPath = pendingMixPath ?: return
+        val stemPath = pendingStemPath.orEmpty()
+        pendingMixPath = null
+        pendingStemPath = null
 
         val song = current ?: return
-        val take = Take(
+        val layer = TakeLayer(
             id = UUID.randomUUID().toString(),
-            songId = song.id,
-            songTitle = song.title,
-            path = path,
-            score = score,
-            maxCombo = maxCombo,
-            durationMs = positionMs.toLong()
+            mixPath = mixPath,
+            stemPath = stemPath,
+            startSongMs = recordStartSongMs,
+            durationMs = (songPositionMs - recordStartSongMs).toLong().coerceAtLeast(0L)
         )
-        takes = listOf(take) + takes
+
+        val base = activeTake
+        val updated = if (base != null && stageMode == StageMode.OVERDUB) {
+            base.withLayer(layer, maxOf(base.score, score), maxOf(base.maxCombo, maxCombo))
+        } else {
+            Take(
+                id = UUID.randomUUID().toString(),
+                songId = song.id,
+                songTitle = song.title,
+                layers = listOf(layer),
+                score = score,
+                maxCombo = maxCombo
+            )
+        }
+
+        takes = listOf(updated) + takes.filterNot { it.id == updated.id }
         repo.saveTakes(takes)
-        lastTake = take
+        activeTake = updated
+        lastTake = updated
     }
 
-    fun shareIntent(take: Take): Intent = Intent(Intent.ACTION_SEND).apply {
-        type = "audio/wav"
-        putExtra(Intent.EXTRA_STREAM, Uri.parse("file://${take.path}"))
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    // ----------------------------------------------------------------- takes
+
+    fun shareIntent(take: Take): Intent =
+        Exporter.shareIntent(getApplication(), take.path, take.songTitle)
+
+    fun exportTake(take: Take) {
+        viewModelScope.launch {
+            val uri = withContext(Dispatchers.IO) {
+                Exporter.exportToMusic(getApplication(), take.path, take.songTitle)
+            }
+            message = if (uri != null) "Salvo em Música/AuraVox." else "Não foi possível exportar."
+        }
+    }
+
+    /** Throws away the newest pass and goes back to the mix before it. */
+    fun undoLayer(take: Take) {
+        val previous = take.withoutLastLayer()
+        repo.deleteLayer(take.layers.last())
+
+        if (previous == null) {
+            deleteTake(take)
+            message = "Gravação removida."
+            return
+        }
+        takes = takes.map { if (it.id == previous.id) previous else it }
+        repo.saveTakes(takes)
+        if (activeTake?.id == previous.id) activeTake = previous
+        message = "Última camada desfeita."
     }
 
     fun deleteTake(take: Take) {
         repo.deleteTake(take)
         takes = takes.filterNot { it.id == take.id }
         repo.saveTakes(takes)
+        if (activeTake?.id == take.id) activeTake = null
     }
+
+    // ---------------------------------------------------------- practice loop
+
+    fun markLoopStart() {
+        loopStartMs = heardMs.toLong().coerceAtLeast(0L)
+        if (loopEndMs <= loopStartMs) loopEndMs = loopStartMs + 8000L
+        pushLoop()
+    }
+
+    fun markLoopEnd() {
+        loopEndMs = heardMs.toLong().coerceAtLeast(loopStartMs + 1000L)
+        pushLoop()
+    }
+
+    fun toggleLoop() {
+        if (!loopEnabled && loopEndMs <= loopStartMs) {
+            message = "Marque o início e o fim do trecho primeiro."
+            return
+        }
+        loopEnabled = !loopEnabled
+        pushLoop()
+    }
+
+    fun clearLoop() {
+        loopEnabled = false
+        loopStartMs = 0L
+        loopEndMs = 0L
+        pushLoop()
+    }
+
+    private fun pushLoop() {
+        set(Param.LOOP_START_MS, loopStartMs.toFloat())
+        set(Param.LOOP_END_MS, loopEndMs.toFloat())
+        set(Param.LOOP_ENABLED, if (loopEnabled) 1f else 0f)
+    }
+
+    fun toggleMonitor() {
+        set(Param.MONITOR_VOICE, if (get(Param.MONITOR_VOICE) > 0.5f) 0f else 1f)
+    }
+
+    val monitorOn: Boolean get() = get(Param.MONITOR_VOICE) > 0.5f
 
     // --------------------------------------------------------------- library
 
@@ -467,7 +673,23 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun get(id: Int): Float = params[id] ?: 0f
 
+    /**
+     * Sets a parameter on the user's behalf.
+     *
+     * Time-stretching the base while layers exist would pull the voice already
+     * on tape out of place, and there is no version of that a singer wants, so
+     * that one is refused out loud rather than silently ruining the take.
+     */
     fun set(id: Int, value: Float) {
+        if (id == Param.TRACK_TEMPO && stageMode == StageMode.OVERDUB && value != 1f) {
+            message = "O andamento fica travado enquanto há camadas gravadas."
+            return
+        }
+        write(id, value)
+    }
+
+    /** Unconditional write. For the app's own bookkeeping, not for controls. */
+    private fun write(id: Int, value: Float) {
         params[id] = value
         NativeAudio.setParam(id, value)
     }
@@ -493,10 +715,11 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
             Param.DOUBLER_MIX, Param.DOUBLER_SPREAD, Param.DOUBLER_DETUNE,
             Param.DELAY_MIX, Param.DELAY_TIME_MS, Param.DELAY_FEEDBACK, Param.DELAY_PING_PONG,
             Param.REVERB_MIX, Param.REVERB_SIZE, Param.REVERB_DAMP, Param.REVERB_PRE_DELAY,
-            Param.VOCAL_WIDTH,
+            Param.VOCAL_WIDTH, Param.VOCODER_MIX, Param.VOCODER_CARRIER, Param.VOCODER_SIBILANCE,
             Param.TRACK_GAIN, Param.TRACK_KEY_SHIFT, Param.TRACK_TEMPO,
             Param.TRACK_VOCAL_REMOVE, Param.TRACK_DUCK, Param.TRACK_WIDTH,
-            Param.MASTER_GAIN, Param.LATENCY_TRIM_MS, Param.METRONOME_GAIN
+            Param.LOOP_START_MS, Param.LOOP_END_MS, Param.LOOP_ENABLED,
+            Param.MASTER_GAIN, Param.LATENCY_TRIM_MS, Param.METRONOME_GAIN, Param.MONITOR_VOICE
         )
         ids.forEach { params[it] = NativeAudio.getParam(it) }
     }

@@ -75,17 +75,51 @@ class Song(
     override fun hashCode() = id.hashCode()
 }
 
-/** A finished performance, on disk as a stereo WAV. */
+/**
+ * One recorded pass.
+ *
+ * `mixPath` holds everything that was playing plus the new voice, which is why
+ * overdub costs nothing: the next layer just plays this file as its backing
+ * track. `stemPath` keeps the processed voice alone, so a pass can be heard
+ * on its own or kept when the mix is thrown away.
+ *
+ * `startSongMs` is the song time the file's first frame belongs to. A take is
+ * recorded with the track already delayed by the round trip, so it starts
+ * slightly before the song did, and the lyrics would run early without it.
+ */
+class TakeLayer(
+    val id: String,
+    val mixPath: String,
+    val stemPath: String,
+    val startSongMs: Double,
+    val durationMs: Long,
+    val recordedAt: Long = System.currentTimeMillis()
+)
+
+/** A performance: one layer, or a stack of them bounced down. */
 class Take(
     val id: String,
     val songId: String,
     val songTitle: String,
-    val path: String,
+    val layers: List<TakeLayer>,
     val score: Float,
     val maxCombo: Int,
-    val durationMs: Long,
     val recordedAt: Long = System.currentTimeMillis()
 ) {
+    /** The mix as it stands: the newest layer already contains the older ones. */
+    val path: String get() = layers.last().mixPath
+    val startSongMs: Double get() = layers.last().startSongMs
+    val durationMs: Long get() = layers.last().durationMs
+    val layerCount: Int get() = layers.size
+
+    fun withLayer(layer: TakeLayer, score: Float, maxCombo: Int) =
+        Take(id, songId, songTitle, layers + layer, score, maxCombo, recordedAt)
+
+    /** Drops the newest layer. Null when there is nothing left to undo. */
+    fun withoutLastLayer(): Take? =
+        if (layers.size <= 1) null
+        else Take(id, songId, songTitle, layers.dropLast(1), score, maxCombo, recordedAt)
+
     override fun equals(other: Any?) = other is Take && other.id == id
     override fun hashCode() = id.hashCode()
 }

@@ -82,11 +82,20 @@ fun ResultScreen(vm: KaraokeViewModel) {
 
         vm.lastTake?.let { take ->
             Text(
-                "Gravação salva",
+                if (take.layerCount > 1) "Gravação salva, ${take.layerCount} camadas"
+                else "Gravação salva",
                 style = MaterialTheme.typography.labelSmall,
                 color = Aura.Teal,
                 modifier = Modifier.padding(top = 20.dp)
             )
+            Row(
+                Modifier.padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(onClick = { vm.playTake(take) }) { Text("Ouvir") }
+                OutlinedButton(onClick = { vm.overdub(take) }) { Text("Nova camada") }
+                OutlinedButton(onClick = { vm.exportTake(take) }) { Text("Exportar") }
+            }
             OutlinedButton(
                 onClick = {
                     context.startActivity(
@@ -94,7 +103,7 @@ fun ResultScreen(vm: KaraokeViewModel) {
                     )
                 },
                 modifier = Modifier.padding(top = 6.dp)
-            ) { Text("Compartilhar take") }
+            ) { Text("Compartilhar") }
         }
 
         Row(
