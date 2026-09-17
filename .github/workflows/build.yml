@@ -38,14 +38,27 @@ jobs:
       # O runner ja traz o SDK em ANDROID_HOME. A action setup-android nao e
       # usada porque ela instala o pacote legado "tools", que saiu do
       # repositorio do SDK e faz o passo inteiro falhar antes do build.
+      # O download do NDK sai truncado de vez em quando ("unknown archive"),
+      # e sao 600 MB: uma tentativa so transforma um soluco de rede em build
+      # vermelha. O pacote pela metade e descartado antes de tentar de novo.
       - name: NDK e CMake
         run: |
           set -eo pipefail
           SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -r | head -n 1)
           test -n "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-          "$SDKMANAGER" --install "ndk;27.0.12077973" "cmake;3.22.1" > /dev/null
-          echo "ndk: $(ls "$ANDROID_HOME/ndk")"
+
+          for attempt in 1 2 3; do
+            if "$SDKMANAGER" --install "ndk;27.0.12077973" "cmake;3.22.1" > /dev/null; then
+              echo "ndk: $(ls "$ANDROID_HOME/ndk")"
+              exit 0
+            fi
+            echo "::warning::instalacao do NDK falhou (tentativa $attempt)"
+            rm -rf "$ANDROID_HOME/ndk/27.0.12077973"
+            sleep $((attempt * 15))
+          done
+          echo "::error::NDK nao instalou em 3 tentativas"
+          exit 1
 
       # O numero da execucao vira versionCode, entao toda build e distinguivel
       # e o app sabe se o que esta publicado e mais novo do que ele
@@ -85,3 +98,18 @@ jobs:
           files: |
             release-apk/auravox-latest.apk
             release-apk/latest.json
+
+      # A action cria a tag quando ela falta, mas nao a move quando ja existe.
+      # Deixa-la para tras ancora a historia inteira daquele commit: objetos que
+      # o repositorio ja descartou continuam alcancaveis por ela, e um clone
+      # limpo volta a baixar tudo. Mover e um PATCH, nunca um delete, para a
+      # release nunca ficar sem tag.
+      - name: Ancorar a tag no commit atual
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eo pipefail
+          gh api -X PATCH "repos/${{ github.repository }}/git/refs/tags/apk-latest" \
+            -f sha="${{ github.sha }}" -F force=true > /dev/null
+          echo "apk-latest agora em ${{ github.sha }}"
