@@ -52,8 +52,17 @@ object NativeSeparator {
     fun resampleFrames(inFrames: Int, inRate: Double, outRate: Double): Int =
         nativeResampleFrames(inFrames, inRate, outRate)
 
-    fun resample(input: FloatArray, inRate: Double, outRate: Double, out: FloatArray): Int =
-        nativeResample(input, inRate, outRate, out)
+    /**
+     * Converts one channel.
+     *
+     * [firstPos] is where in [input] the first output sample is taken from, in
+     * fractional input frames. Converting a file in chunks must supply it: the
+     * output grid belongs to the whole file, and restarting it at zero per
+     * chunk puts every chunk on its own grid.
+     */
+    fun resample(
+        input: FloatArray, inRate: Double, outRate: Double, out: FloatArray, firstPos: Double = 0.0
+    ): Int = nativeResample(input, inRate, outRate, out, firstPos)
 
     private external fun nativePrepare(nFft: Int, hop: Int, modelBins: Int): Boolean
     private external fun nativeRelease()
@@ -66,6 +75,6 @@ object NativeSeparator {
     )
     private external fun nativeResampleFrames(inFrames: Int, inRate: Double, outRate: Double): Int
     private external fun nativeResample(
-        input: FloatArray, inRate: Double, outRate: Double, out: FloatArray
+        input: FloatArray, inRate: Double, outRate: Double, out: FloatArray, firstPos: Double
     ): Int
 }

@@ -72,14 +72,25 @@ public:
         return (int) std::floor((double) inFrames / step_);
     }
 
+    double step() const noexcept { return step_; }
+
     /**
      * Converts one channel. Reads outside the input count as zero, so the
      * caller does not pad.
+     *
+     * `firstPos` is where in the input buffer the first output sample is
+     * taken from, in fractional input frames. A caller converting a long file
+     * in chunks has to supply it: the output grid belongs to the whole file,
+     * and restarting it at zero for every chunk puts each chunk on its own
+     * grid. The error is under one input sample, which sounds like a click at
+     * every chunk boundary rather than like anything being out of tune.
      */
-    void process(const float *in, int inFrames, float *out, int outFrames) const noexcept {
+    void process(
+        const float *in, int inFrames, float *out, int outFrames, double firstPos = 0.0
+    ) const noexcept {
         const int half = kTaps / 2;
         for (int i = 0; i < outFrames; ++i) {
-            const double pos = (double) i * step_;
+            const double pos = firstPos + (double) i * step_;
             const int base = (int) std::floor(pos);
             const double frac = pos - (double) base;
 

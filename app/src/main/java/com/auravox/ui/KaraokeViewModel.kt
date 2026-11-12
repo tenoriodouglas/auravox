@@ -1000,7 +1000,6 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
                     stems.vocal?.let { analyzeMelodyFromStem(song.id, it) }
                 }
                 is VocalSeparator.Result.Failed -> message = outcome.reason
-                VocalSeparator.Result.Cancelled -> message = "Separação cancelada."
             }
         }
     }

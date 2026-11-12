@@ -44,10 +44,19 @@ class VocalSeparator(private val context: Context) {
         val frames: Long
     )
 
+    /**
+     * There is no Cancelled case on purpose.
+     *
+     * Cancelling this job cancels the scope it runs in, and a value returned
+     * from inside a cancelled coroutine never reaches the caller: the
+     * cancellation wins and is rethrown. So cancellation leaves here as a
+     * CancellationException, the catch below exists only to delete the
+     * half-written stems, and the caller clears its own state in a finally.
+     * A Cancelled case would have been a branch nothing could ever take.
+     */
     sealed interface Result {
         data class Done(val stems: Stems) : Result
         data class Failed(val reason: String) : Result
-        data object Cancelled : Result
     }
 
     /**
@@ -118,7 +127,7 @@ class VocalSeparator(private val context: Context) {
             )
         } catch (e: CancellationException) {
             clean(instrumentalFile, vocalFile)
-            Result.Cancelled
+            throw e          // never swallowed: the scope is already cancelled
         } catch (e: Exception) {
             clean(instrumentalFile, vocalFile)
             Result.Failed(e.message ?: "A separação falhou.")
@@ -191,13 +200,19 @@ class VocalSeparator(private val context: Context) {
     /**
      * Converts the scratch file to the rate the net was trained at.
      *
-     * Done in overlapping chunks, with the kernel's reach carried across each
-     * boundary, so the conversion does not see a cliff every buffer.
+     * Done in chunks, with the kernel's reach carried across each boundary so
+     * the filter does not see a cliff. The output grid belongs to the whole
+     * file: each chunk emits exactly the output samples whose position on that
+     * global grid lands inside it, and takes them from the position the global
+     * grid asks for. Letting each chunk start its own grid at zero instead put
+     * every chunk a fraction of a sample out of step with the last, which is a
+     * click every six seconds rather than anything being out of tune.
      */
     private suspend fun convert(
         from: File, to: File, frames: Long, inRate: Int, onProgress: (Float) -> Unit
     ): Long {
         val outRate = NativeSeparator.MODEL_RATE.toDouble()
+        val step = inRate.toDouble() / outRate
         val chunk = 1 shl 18   // about six seconds at 44.1 kHz
         var written = 0L
 
@@ -211,38 +226,37 @@ class VocalSeparator(private val context: Context) {
                     // Read the chunk plus the kernel's reach on either side
                     val head = minOf(offset, kContext.toLong()).toInt()
                     val start = offset - head
-                    val wanted = (chunk + head + kContext).toInt()
+                    val body = minOf(chunk.toLong(), frames - offset)
+                    val wanted = (body + head + kContext).toInt()
                     val left = FloatArray(wanted)
                     val right = FloatArray(wanted)
                     val got = readFrames(input, start, left, right)
                     if (got <= 0) break
 
-                    val outTotal = NativeSeparator.resampleFrames(got, inRate.toDouble(), outRate)
-                    if (outTotal <= 0) break
-                    val outL = FloatArray(outTotal)
-                    val outR = FloatArray(outTotal)
-                    NativeSeparator.resample(left, inRate.toDouble(), outRate, outL)
-                    NativeSeparator.resample(right, inRate.toDouble(), outRate, outR)
+                    // The output samples of the whole file that land in this
+                    // chunk's body, and where each sits inside the buffer
+                    val firstIndex = ceilDiv(offset, step)
+                    val endIndex = ceilDiv(offset + body, step)
+                    val count = (endIndex - firstIndex).toInt()
+                    if (count > 0) {
+                        val firstPos = firstIndex.toDouble() * step - start.toDouble()
+                        val outL = FloatArray(count)
+                        val outR = FloatArray(count)
+                        NativeSeparator.resample(left, inRate.toDouble(), outRate, outL, firstPos)
+                        NativeSeparator.resample(right, inRate.toDouble(), outRate, outR, firstPos)
 
-                    // Drop what the leading context already covered, and the
-                    // trailing context, which the next chunk will produce
-                    val skip = NativeSeparator.resampleFrames(head, inRate.toDouble(), outRate)
-                    val body = NativeSeparator.resampleFrames(
-                        minOf(chunk.toLong(), frames - offset).toInt(), inRate.toDouble(), outRate
-                    )
-                    val end = minOf(skip + body, outTotal)
-
-                    for (i in skip until end) {
-                        if (staging.remaining() < 8) {
-                            sink.write(staging.array(), 0, staging.position())
-                            staging.clear()
+                        for (i in 0 until count) {
+                            if (staging.remaining() < 8) {
+                                sink.write(staging.array(), 0, staging.position())
+                                staging.clear()
+                            }
+                            staging.putFloat(outL[i])
+                            staging.putFloat(outR[i])
+                            ++written
                         }
-                        staging.putFloat(outL[i])
-                        staging.putFloat(outR[i])
-                        ++written
                     }
 
-                    offset += chunk
+                    offset += body
                     onProgress((offset.toFloat() / frames).coerceIn(0f, 1f))
                 }
                 if (staging.position() > 0) sink.write(staging.array(), 0, staging.position())
@@ -251,6 +265,10 @@ class VocalSeparator(private val context: Context) {
         onProgress(1f)
         return written
     }
+
+    /** Smallest integer j with j*step >= value. */
+    private fun ceilDiv(value: Long, step: Double): Long =
+        kotlin.math.ceil(value.toDouble() / step).toLong()
 
     /**
      * Walks the song one split at a time.

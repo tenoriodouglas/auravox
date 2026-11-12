@@ -1130,6 +1130,73 @@ static void testResampler() {
               fmt2("%.4f em 21.1 kHz, %.0f dB abaixo", folded, dB));
     }
 
+    /*
+     * Converting in chunks must equal converting the whole thing.
+     *
+     * A song is converted a few seconds at a time, and the output grid belongs
+     * to the whole file. Letting each chunk restart that grid at zero put every
+     * chunk a fraction of a sample out of step with the one before it, which is
+     * a click at every boundary. This reproduces the chunked caller's
+     * arithmetic and demands the same samples the one-shot conversion gives.
+     */
+    {
+        Resampler r;
+        r.prepare(48000.0, 44100.0);
+        const double step = 48000.0 / 44100.0;
+        const int inN = 48000 * 2;
+        std::vector<float> in((size_t) inN);
+        for (int i = 0; i < inN; ++i) {
+            const float t = (float) i / 48000.0f;
+            in[(size_t) i] = 0.4f * std::sin(2.0f * (float) M_PI * 997.0f * t)
+                           + 0.2f * std::sin(2.0f * (float) M_PI * 5000.0f * t);
+        }
+
+        const int wholeN = r.outputFrames(inN);
+        std::vector<float> whole((size_t) wholeN);
+        r.process(in.data(), inN, whole.data(), wholeN, 0.0);
+
+        // Now in chunks, the way the separator does it
+        const int context = 64;
+        const int chunk = 7777;   // deliberately not a multiple of anything
+        std::vector<float> pieced;
+        long long offset = 0;
+        while (offset < inN) {
+            const long long head = std::min(offset, (long long) context);
+            const long long start = offset - head;
+            const long long body = std::min((long long) chunk, (long long) inN - offset);
+            const int wanted = (int) (body + head + context);
+            std::vector<float> buf((size_t) wanted, 0.0f);
+            for (int i = 0; i < wanted; ++i) {
+                const long long src = start + i;
+                if (src >= 0 && src < inN) buf[(size_t) i] = in[(size_t) src];
+            }
+            const long long firstIndex = (long long) std::ceil((double) offset / step);
+            const long long endIndex = (long long) std::ceil((double) (offset + body) / step);
+            const int count = (int) (endIndex - firstIndex);
+            if (count > 0) {
+                const double firstPos = (double) firstIndex * step - (double) start;
+                std::vector<float> piece((size_t) count);
+                r.process(buf.data(), wanted, piece.data(), count, firstPos);
+                pieced.insert(pieced.end(), piece.begin(), piece.end());
+            }
+            offset += body;
+        }
+
+        check(std::abs((int) pieced.size() - wholeN) <= 1,
+              "converter em trechos da o mesmo numero de amostras",
+              fmtI2("%d em trechos, %d inteiro", (int) pieced.size(), wholeN));
+
+        const int n = std::min((int) pieced.size(), wholeN);
+        float worst = 0.0f;
+        int worstAt = 0;
+        for (int i = context; i < n - context; ++i) {
+            const float d = std::fabs(pieced[(size_t) i] - whole[(size_t) i]);
+            if (d > worst) { worst = d; worstAt = i; }
+        }
+        check(worst < 1e-5f, "e as mesmas amostras, sem salto na costura",
+              fmt2("pior %.2e na amostra %.0f", worst, (double) worstAt));
+    }
+
     // --- nothing to do is free ---
     {
         Resampler r;

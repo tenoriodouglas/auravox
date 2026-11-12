@@ -133,7 +133,7 @@ Java_com_auravox_separation_NativeSeparator_nativeResampleFrames(
 JNIEXPORT jint JNICALL
 Java_com_auravox_separation_NativeSeparator_nativeResample(
     JNIEnv *env, jobject,
-    jfloatArray in, jdouble inRate, jdouble outRate, jfloatArray out
+    jfloatArray in, jdouble inRate, jdouble outRate, jfloatArray out, jdouble firstPos
 ) {
     static double lastIn = 0.0, lastOut = 0.0;
     if (inRate != lastIn || outRate != lastOut) {
@@ -146,7 +146,7 @@ Java_com_auravox_separation_NativeSeparator_nativeResample(
     const jsize outFrames = env->GetArrayLength(out);
     jfloat *src = env->GetFloatArrayElements(in, nullptr);
     jfloat *dst = env->GetFloatArrayElements(out, nullptr);
-    gResampler.process(src, inFrames, dst, outFrames);
+    gResampler.process(src, inFrames, dst, outFrames, firstPos);
     env->ReleaseFloatArrayElements(in, src, JNI_ABORT);
     env->ReleaseFloatArrayElements(out, dst, 0);
     return outFrames;

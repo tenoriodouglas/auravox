@@ -2,7 +2,9 @@ package com.auravox.separation
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -79,6 +81,10 @@ object ModelStore {
             val target = fileFor(context, model)
             val partial = File(target.parentFile, "${model.name}.part")
             val error = download("$BASE/${model.name}", partial) { written ->
+                // Checked in the read loop, not only between files: these are
+                // twenty megabytes each, and cancelling in the middle of the
+                // first one used to carry on to the end of the second
+                coroutineContext.ensureActive()
                 onProgress(((done + written).toFloat() / total).coerceIn(0f, 1f))
             }
             if (error != null) {
@@ -106,7 +112,9 @@ object ModelStore {
         directory(context).listFiles()?.forEach { it.delete() }
     }
 
-    private fun download(url: String, target: File, onBytes: (Long) -> Unit): String? {
+    private suspend fun download(
+        url: String, target: File, onBytes: suspend (Long) -> Unit
+    ): String? {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 20_000
             readTimeout = 30_000
@@ -130,6 +138,9 @@ object ModelStore {
                 }
             }
             return null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            target.delete()
+            throw e
         } catch (e: Exception) {
             return e.message ?: "Falha ao baixar o modelo."
         } finally {

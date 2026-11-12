@@ -39,17 +39,26 @@ class WavSink(private val file: File, private val sampleRate: Int) : Closeable {
         frames += count
     }
 
+    /**
+     * Finishes the file and patches the two lengths.
+     *
+     * The stream is closed in a finally: a cache partition filling up throws
+     * out of the final flush, and leaving the descriptor open then meant the
+     * caller's own cleanup skipped the second stem's file as well.
+     */
     override fun close() {
-        flushBuffer()
-        stream.flush()
-        stream.close()
-        // Patch the two lengths now that they are known
+        try {
+            flushBuffer()
+            stream.flush()
+        } finally {
+            runCatching { stream.close() }
+        }
         RandomAccessFile(file, "rw").use { out ->
             val dataBytes = frames * 4L
             out.seek(4)
-            out.write(intLe((36L + dataBytes).toInt()))
+            out.write(sizeLe(36L + dataBytes))
             out.seek(40)
-            out.write(intLe(dataBytes.toInt()))
+            out.write(sizeLe(dataBytes))
         }
     }
 
@@ -88,10 +97,21 @@ class WavSink(private val file: File, private val sampleRate: Int) : Closeable {
         return buffer.array()
     }
 
-    private fun intLe(v: Int) = byteArrayOf(
-        (v and 0xFF).toByte(),
-        ((v shr 8) and 0xFF).toByte(),
-        ((v shr 16) and 0xFF).toByte(),
-        ((v shr 24) and 0xFF).toByte()
-    )
+    /**
+     * A WAV size field: four bytes, unsigned, little endian.
+     *
+     * Written from a Long and capped rather than narrowed to Int. Narrowing
+     * wrapped negative past about three and a half hours of stereo, and a
+     * negative length is a file the platform decoder reports as having no
+     * duration — which would have looked like separation producing silence.
+     */
+    private fun sizeLe(value: Long): ByteArray {
+        val v = value.coerceIn(0L, 0xFFFFFFFFL)
+        return byteArrayOf(
+            (v and 0xFF).toByte(),
+            ((v shr 8) and 0xFF).toByte(),
+            ((v shr 16) and 0xFF).toByte(),
+            ((v shr 24) and 0xFF).toByte()
+        )
+    }
 }
