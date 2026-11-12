@@ -18,6 +18,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.LayersClear
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.LibraryMusic
@@ -53,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.auravox.karaoke.Song
 import com.auravox.ui.Aura
+import com.auravox.separation.VocalSeparator
 import com.auravox.ui.KaraokeViewModel
 import kotlin.math.roundToInt
 
@@ -124,6 +128,36 @@ fun LibraryScreen(vm: KaraokeViewModel, onNeedMic: (() -> Unit) -> Unit) {
                 }
             }
 
+            vm.separating?.let { id ->
+                val name = vm.songs.firstOrNull { it.id == id }?.title ?: ""
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            when (vm.separatePhase) {
+                                VocalSeparator.Phase.MODEL -> "Baixando o modelo de separação"
+                                VocalSeparator.Phase.DECODE -> "Lendo $name"
+                                VocalSeparator.Phase.RESAMPLE -> "Ajustando a taxa de $name"
+                                VocalSeparator.Phase.SEPARATE -> "Separando o vocal de $name"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Aura.Violet,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { vm.cancelSeparation() }) {
+                            Text("cancelar", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    LinearProgressIndicator(
+                        progress = { vm.separateProgress },
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        color = Aura.Violet
+                    )
+                }
+            }
+
             if (vm.songs.isEmpty()) {
                 EmptyLibrary()
             } else {
@@ -136,6 +170,9 @@ fun LibraryScreen(vm: KaraokeViewModel, onNeedMic: (() -> Unit) -> Unit) {
                             song = song,
                             onPlay = { onNeedMic { vm.openSong(song) } },
                             onAnalyze = { vm.analyze(song) },
+                            onSeparate = { vm.separate(song) },
+                            onDiscardStems = { vm.discardStems(song) },
+                            onFetchLyrics = { vm.fetchLyrics(song) },
                             onLyrics = {
                                 lyricsTarget = song
                                 pickLyrics.launch(arrayOf("*/*"))
@@ -238,6 +275,9 @@ private fun SongRow(
     song: Song,
     onPlay: () -> Unit,
     onAnalyze: () -> Unit,
+    onSeparate: () -> Unit,
+    onDiscardStems: () -> Unit,
+    onFetchLyrics: () -> Unit,
     onLyrics: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -281,6 +321,7 @@ private fun SongRow(
                         if (song.bpm > 40f) append(" · ${song.bpm.roundToInt()} BPM")
                         append(" · ${song.noteCount} notas")
                         if (song.hasLyrics) append(" · letra")
+                        if (song.separated) append(" · vocal separado")
                     } else {
                         append("aguardando análise")
                     }
@@ -308,6 +349,24 @@ private fun SongRow(
                     text = { Text("Analisar de novo") },
                     leadingIcon = { Icon(Icons.Filled.GraphicEq, null) },
                     onClick = { menu = false; onAnalyze() }
+                )
+                if (song.separated) {
+                    DropdownMenuItem(
+                        text = { Text("Apagar base separada") },
+                        leadingIcon = { Icon(Icons.Filled.LayersClear, null) },
+                        onClick = { menu = false; onDiscardStems() }
+                    )
+                } else {
+                    DropdownMenuItem(
+                        text = { Text("Remover o vocal da música") },
+                        leadingIcon = { Icon(Icons.Filled.AutoAwesome, null) },
+                        onClick = { menu = false; onSeparate() }
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text("Buscar letra na internet") },
+                    leadingIcon = { Icon(Icons.Filled.CloudDownload, null) },
+                    onClick = { menu = false; onFetchLyrics() }
                 )
                 DropdownMenuItem(
                     text = { Text("Carregar letra (.lrc)") },

@@ -98,6 +98,10 @@ class SongRepository(private val context: Context) {
         put("bestScore", s.bestScore.toDouble())
         put("timesPlayed", s.timesPlayed)
         put("analyzed", s.analyzed)
+        s.instrumentalPath?.let { put("instrumentalPath", it) }
+        s.vocalPath?.let { put("vocalPath", it) }
+        put("separatedAt", s.separatedAt)
+        put("melodyFromStem", s.melodyFromStem)
         put("notes", JSONArray().apply { s.notes.forEach { put(it.toDouble()) } })
         put("lyrics", JSONArray().apply {
             s.lyrics.forEach { line ->
@@ -149,7 +153,16 @@ class SongRepository(private val context: Context) {
             addedAt = o.optLong("addedAt", System.currentTimeMillis()),
             bestScore = o.optDouble("bestScore", 0.0).toFloat(),
             timesPlayed = o.optInt("timesPlayed"),
-            analyzed = o.optBoolean("analyzed")
+            analyzed = o.optBoolean("analyzed"),
+            // A stem whose file has gone is no stem at all, so the song falls
+            // back to the original and the mid/side canceller becomes useful
+            // again rather than the stage playing silence
+            instrumentalPath = o.optString("instrumentalPath")
+                .takeIf { it.isNotBlank() && java.io.File(it).exists() },
+            vocalPath = o.optString("vocalPath")
+                .takeIf { it.isNotBlank() && java.io.File(it).exists() },
+            separatedAt = o.optLong("separatedAt"),
+            melodyFromStem = o.optBoolean("melodyFromStem")
         )
     }
 

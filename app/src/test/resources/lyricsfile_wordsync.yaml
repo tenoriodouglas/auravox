@@ -1,0 +1,712 @@
+version: '1.0'
+metadata:
+  title: Blinding Lights
+  artist: The Weeknd
+  instrumental: false
+  album: After Hours
+  duration_ms: 200000
+  language: en
+lines:
+- text: Yeah
+  start_ms: 13120
+  end_ms: 14551
+  words:
+  - text: Yeah
+    start_ms: 13159
+- text: I've been tryna call
+  start_ms: 27170
+  end_ms: 28268
+  words:
+  - text: 'I''ve '
+    start_ms: 27209
+  - text: 'been '
+    start_ms: 27598
+  - text: 'tryna '
+    start_ms: 27889
+  - text: call
+    start_ms: 28200
+- text: I've been on my own for long enough
+  start_ms: 29960
+  end_ms: 31779
+  words:
+  - text: 'I''ve '
+    start_ms: 29999
+  - text: 'been '
+    start_ms: 30160
+  - text: 'on '
+    start_ms: 30380
+  - text: 'my '
+    start_ms: 30578
+  - text: 'own '
+    start_ms: 30759
+  - text: 'for '
+    start_ms: 30988
+  - text: 'long '
+    start_ms: 31271
+  - text: enough
+    start_ms: 31641
+- text: Maybe you can show me how to love, maybe
+  start_ms: 32740
+  end_ms: 36301
+  words:
+  - text: 'Maybe '
+    start_ms: 32779
+  - text: 'you '
+    start_ms: 32929
+  - text: 'can '
+    start_ms: 33010
+  - text: 'show '
+    start_ms: 33090
+  - text: 'me '
+    start_ms: 33410
+  - text: 'how '
+    start_ms: 33610
+  - text: 'to '
+    start_ms: 33779
+  - text: 'love, '
+    start_ms: 34008
+  - text: maybe
+    start_ms: 35470
+- text: I'm goin' through withdrawals
+  start_ms: 38260
+  end_ms: 39349
+  words:
+  - text: 'I''m '
+    start_ms: 38299
+  - text: 'goin'' '
+    start_ms: 38539
+  - text: 'through '
+    start_ms: 38730
+  - text: withdrawals
+    start_ms: 39019
+- text: You don't even have to do too much
+  start_ms: 41210
+  end_ms: 43060
+  words:
+  - text: 'You '
+    start_ms: 41249
+  - text: 'don''t '
+    start_ms: 41540
+  - text: 'even '
+    start_ms: 41861
+  - text: 'have '
+    start_ms: 42208
+  - text: 'to '
+    start_ms: 42550
+  - text: 'do '
+    start_ms: 42688
+  - text: 'too '
+    start_ms: 42909
+  - text: much
+    start_ms: 43059
+- text: You can turn me on with just a touch, baby
+  start_ms: 44160
+  end_ms: 47080
+  words:
+  - text: 'You '
+    start_ms: 44199
+  - text: 'can '
+    start_ms: 44360
+  - text: 'turn '
+    start_ms: 44470
+  - text: 'me '
+    start_ms: 44589
+  - text: 'on '
+    start_ms: 44718
+  - text: 'with '
+    start_ms: 44850
+  - text: 'just '
+    start_ms: 45278
+  - text: 'a '
+    start_ms: 45600
+  - text: 'touch, '
+    start_ms: 45690
+  - text: baby
+    start_ms: 46858
+- text: I look around and
+  start_ms: 49580
+  end_ms: 50349
+  words:
+  - text: 'I '
+    start_ms: 49619
+  - text: 'look '
+    start_ms: 49809
+  - text: 'around '
+    start_ms: 50010
+  - text: and
+    start_ms: 50270
+- text: Sin City's cold and empty (oh)
+  start_ms: 50660
+  end_ms: 52619
+  words:
+  - text: 'Sin '
+    start_ms: 50699
+  - text: 'City''s '
+    start_ms: 50929
+  - text: 'cold '
+    start_ms: 51340
+  - text: 'and '
+    start_ms: 51591
+  - text: 'empty '
+    start_ms: 51871
+  - text: (oh)
+    start_ms: 52609
+- text: No one's around to judge me (oh)
+  start_ms: 53550
+  end_ms: 55878
+  words:
+  - text: 'No '
+    start_ms: 53589
+  - text: 'one''s '
+    start_ms: 53719
+  - text: 'around '
+    start_ms: 53958
+  - text: 'to '
+    start_ms: 54428
+  - text: 'judge '
+    start_ms: 54608
+  - text: 'me '
+    start_ms: 55080
+  - text: (oh)
+    start_ms: 55501
+- text: I can't see clearly when you're gone
+  start_ms: 56230
+  end_ms: 58808
+  words:
+  - text: 'I '
+    start_ms: 56269
+  - text: 'can''t '
+    start_ms: 56289
+  - text: 'see '
+    start_ms: 56558
+  - text: 'clearly '
+    start_ms: 56789
+  - text: 'when '
+    start_ms: 57348
+  - text: 'you''re '
+    start_ms: 57730
+  - text: gone
+    start_ms: 58289
+- text: I said, "Ooh, I'm blinded by the lights
+  start_ms: 60740
+  end_ms: 65831
+  words:
+  - text: 'I '
+    start_ms: 60779
+  - text: 'said, '
+    start_ms: 60930
+  - text: '"Ooh, '
+    start_ms: 61489
+  - text: 'I''m '
+    start_ms: 62778
+  - text: 'blinded '
+    start_ms: 64391
+  - text: 'by '
+    start_ms: 65008
+  - text: 'the '
+    start_ms: 65260
+  - text: lights
+    start_ms: 65509
+- text: No, I can't sleep until I feel your touch"
+  start_ms: 66600
+  end_ms: 70297
+  words:
+  - text: 'No, '
+    start_ms: 66639
+  - text: 'I '
+    start_ms: 66830
+  - text: 'can''t '
+    start_ms: 66858
+  - text: 'sleep '
+    start_ms: 67369
+  - text: 'until '
+    start_ms: 68258
+  - text: 'I '
+    start_ms: 68768
+  - text: 'feel '
+    start_ms: 68858
+  - text: 'your '
+    start_ms: 69251
+  - text: touch"
+    start_ms: 69861
+- text: I said, "Ooh, I'm drowning in the night
+  start_ms: 71780
+  end_ms: 77038
+  words:
+  - text: 'I '
+    start_ms: 71819
+  - text: 'said, '
+    start_ms: 71880
+  - text: '"Ooh, '
+    start_ms: 72561
+  - text: 'I''m '
+    start_ms: 75020
+  - text: 'drowning '
+    start_ms: 75578
+  - text: 'in '
+    start_ms: 76319
+  - text: 'the '
+    start_ms: 76529
+  - text: night
+    start_ms: 76808
+- text: Oh, when I'm like this, you're the one I trust"
+  start_ms: 77840
+  end_ms: 81469
+  words:
+  - text: 'Oh, '
+    start_ms: 77879
+  - text: 'when '
+    start_ms: 78230
+  - text: 'I''m '
+    start_ms: 78491
+  - text: 'like '
+    start_ms: 78639
+  - text: 'this, '
+    start_ms: 78838
+  - text: 'you''re '
+    start_ms: 79549
+  - text: 'the '
+    start_ms: 79908
+  - text: 'one '
+    start_ms: 80138
+  - text: 'I '
+    start_ms: 80610
+  - text: trust"
+    start_ms: 81090
+- text: (Hey, hey, hey)
+  start_ms: 82190
+  end_ms: 83468
+  words:
+  - text: '(Hey, '
+    start_ms: 82229
+  - text: 'hey, '
+    start_ms: 82587
+  - text: hey)
+    start_ms: 83259
+- text: I'm running out of time
+  start_ms: 94330
+  end_ms: 95468
+  words:
+  - text: 'I''m '
+    start_ms: 94369
+  - text: 'running '
+    start_ms: 94698
+  - text: 'out '
+    start_ms: 94999
+  - text: 'of '
+    start_ms: 95158
+  - text: time
+    start_ms: 95310
+- text: '''Cause I can see the sun light up the sky'
+  start_ms: 97080
+  end_ms: 99148
+  words:
+  - text: '''Cause '
+    start_ms: 97119
+  - text: 'I '
+    start_ms: 97359
+  - text: 'can '
+    start_ms: 97469
+  - text: 'see '
+    start_ms: 97638
+  - text: 'the '
+    start_ms: 97849
+  - text: 'sun '
+    start_ms: 98050
+  - text: 'light '
+    start_ms: 98280
+  - text: 'up '
+    start_ms: 98580
+  - text: 'the '
+    start_ms: 98799
+  - text: sky
+    start_ms: 99040
+- text: So I hit the road in overdrive, baby, oh
+  start_ms: 100010
+  end_ms: 105058
+  words:
+  - text: 'So '
+    start_ms: 100049
+  - text: 'I '
+    start_ms: 100160
+  - text: 'hit '
+    start_ms: 100190
+  - text: 'the '
+    start_ms: 100338
+  - text: 'road '
+    start_ms: 100450
+  - text: 'in '
+    start_ms: 100808
+  - text: 'overdrive, '
+    start_ms: 100981
+  - text: 'baby, '
+    start_ms: 102358
+  - text: oh
+    start_ms: 103699
+- text: The city's cold and empty (oh)
+  start_ms: 106660
+  end_ms: 108828
+  words:
+  - text: 'The '
+    start_ms: 106699
+  - text: 'city''s '
+    start_ms: 106848
+  - text: 'cold '
+    start_ms: 107180
+  - text: 'and '
+    start_ms: 107560
+  - text: 'empty '
+    start_ms: 107819
+  - text: (oh)
+    start_ms: 108748
+- text: No one's around to judge me (oh)
+  start_ms: 109550
+  end_ms: 111670
+  words:
+  - text: 'No '
+    start_ms: 109589
+  - text: 'one''s '
+    start_ms: 109701
+  - text: 'around '
+    start_ms: 109968
+  - text: 'to '
+    start_ms: 110391
+  - text: 'judge '
+    start_ms: 110579
+  - text: 'me '
+    start_ms: 111008
+  - text: (oh)
+    start_ms: 111559
+- text: I can't see clearly when you're gone
+  start_ms: 112460
+  end_ms: 115458
+  words:
+  - text: 'I '
+    start_ms: 112499
+  - text: 'can''t '
+    start_ms: 112570
+  - text: 'see '
+    start_ms: 112899
+  - text: 'clearly '
+    start_ms: 113118
+  - text: 'when '
+    start_ms: 113861
+  - text: 'you''re '
+    start_ms: 114271
+  - text: gone
+    start_ms: 115118
+- text: I said, "Ooh, I'm blinded by the lights
+  start_ms: 116920
+  end_ms: 121870
+  words:
+  - text: 'I '
+    start_ms: 116959
+  - text: 'said, '
+    start_ms: 117110
+  - text: '"Ooh, '
+    start_ms: 117780
+  - text: 'I''m '
+    start_ms: 120108
+  - text: 'blinded '
+    start_ms: 120560
+  - text: 'by '
+    start_ms: 121238
+  - text: 'the '
+    start_ms: 121520
+  - text: lights
+    start_ms: 121718
+- text: No, I can't sleep until I feel your touch"
+  start_ms: 122750
+  end_ms: 126420
+  words:
+  - text: 'No, '
+    start_ms: 122789
+  - text: 'I '
+    start_ms: 122959
+  - text: 'can''t '
+    start_ms: 123100
+  - text: 'sleep '
+    start_ms: 123510
+  - text: 'until '
+    start_ms: 124290
+  - text: 'I '
+    start_ms: 124949
+  - text: 'feel '
+    start_ms: 125130
+  - text: 'your '
+    start_ms: 125561
+  - text: touch"
+    start_ms: 126298
+- text: I said, "Ooh, I'm drowning in the night
+  start_ms: 127930
+  end_ms: 133028
+  words:
+  - text: 'I '
+    start_ms: 127969
+  - text: 'said, '
+    start_ms: 128039
+  - text: '"Ooh, '
+    start_ms: 128808
+  - text: 'I''m '
+    start_ms: 131328
+  - text: 'drowning '
+    start_ms: 131660
+  - text: 'in '
+    start_ms: 132378
+  - text: 'the '
+    start_ms: 132590
+  - text: night
+    start_ms: 132799
+- text: Oh, when I'm like this, you're the one I trust"
+  start_ms: 134020
+  end_ms: 137750
+  words:
+  - text: 'Oh, '
+    start_ms: 134059
+  - text: 'when '
+    start_ms: 134270
+  - text: 'I''m '
+    start_ms: 134611
+  - text: 'like '
+    start_ms: 134839
+  - text: 'this, '
+    start_ms: 135160
+  - text: 'you''re '
+    start_ms: 135939
+  - text: 'the '
+    start_ms: 136378
+  - text: 'one '
+    start_ms: 136669
+  - text: 'I '
+    start_ms: 137009
+  - text: trust"
+    start_ms: 137360
+- text: I'm just walking by to let you know (by to let you know)
+  start_ms: 139140
+  end_ms: 141579
+  words:
+  - text: 'I''m '
+    start_ms: 139179
+  - text: 'just '
+    start_ms: 139349
+  - text: 'walking '
+    start_ms: 139460
+  - text: 'by '
+    start_ms: 139850
+  - text: 'to '
+    start_ms: 140010
+  - text: 'let '
+    start_ms: 140117
+  - text: 'you '
+    start_ms: 140228
+  - text: 'know '
+    start_ms: 140330
+  - text: '(by '
+    start_ms: 140781
+  - text: 'to '
+    start_ms: 140957
+  - text: 'let '
+    start_ms: 141228
+  - text: 'you '
+    start_ms: 141440
+  - text: know)
+    start_ms: 141558
+- text: I could never say it on the phone (say it on the phone)
+  start_ms: 142100
+  end_ms: 144118
+  words:
+  - text: 'I '
+    start_ms: 142139
+  - text: 'could '
+    start_ms: 142209
+  - text: 'never '
+    start_ms: 142351
+  - text: 'say '
+    start_ms: 142508
+  - text: 'it '
+    start_ms: 142710
+  - text: 'on '
+    start_ms: 142820
+  - text: 'the '
+    start_ms: 142890
+  - text: 'phone '
+    start_ms: 143129
+  - text: '(say '
+    start_ms: 143688
+  - text: 'it '
+    start_ms: 143869
+  - text: 'on '
+    start_ms: 143949
+  - text: 'the '
+    start_ms: 143978
+  - text: phone)
+    start_ms: 144080
+- text: Will never let you go this time (ooh)
+  start_ms: 145300
+  end_ms: 149949
+  words:
+  - text: 'Will '
+    start_ms: 145339
+  - text: 'never '
+    start_ms: 145578
+  - text: 'let '
+    start_ms: 145889
+  - text: 'you '
+    start_ms: 146030
+  - text: 'go '
+    start_ms: 146278
+  - text: 'this '
+    start_ms: 146851
+  - text: 'time '
+    start_ms: 147608
+  - text: (ooh)
+    start_ms: 149929
+- text: I said, "Ooh, I'm blinded by the lights
+  start_ms: 150210
+  end_ms: 154788
+  words:
+  - text: 'I '
+    start_ms: 150249
+  - text: 'said, '
+    start_ms: 150360
+  - text: '"Ooh, '
+    start_ms: 151058
+  - text: 'I''m '
+    start_ms: 153248
+  - text: 'blinded '
+    start_ms: 153750
+  - text: 'by '
+    start_ms: 154288
+  - text: 'the '
+    start_ms: 154487
+  - text: lights
+    start_ms: 154729
+- text: No, I can't sleep until I feel your touch"
+  start_ms: 156320
+  end_ms: 159598
+  words:
+  - text: 'No, '
+    start_ms: 156359
+  - text: 'I '
+    start_ms: 156619
+  - text: 'can''t '
+    start_ms: 156729
+  - text: 'sleep '
+    start_ms: 157078
+  - text: 'until '
+    start_ms: 157768
+  - text: 'I '
+    start_ms: 158398
+  - text: 'feel '
+    start_ms: 158558
+  - text: 'your '
+    start_ms: 158939
+  - text: touch"
+    start_ms: 159499
+- text: (Hey, hey, hey)
+  start_ms: 160530
+  end_ms: 162010
+  words:
+  - text: '(Hey, '
+    start_ms: 160569
+  - text: 'hey, '
+    start_ms: 161240
+  - text: hey)
+    start_ms: 161830
+- text: (Hey, hey, hey)
+  start_ms: 171790
+  end_ms: 173258
+  words:
+  - text: '(Hey, '
+    start_ms: 171829
+  - text: 'hey, '
+    start_ms: 172488
+  - text: hey)
+    start_ms: 173178
+- text: I said, "Ooh, I'm blinded by the lights
+  start_ms: 183980
+  end_ms: 189010
+  words:
+  - text: 'I '
+    start_ms: 184019
+  - text: 'said, '
+    start_ms: 184158
+  - text: '"Ooh, '
+    start_ms: 184879
+  - text: 'I''m '
+    start_ms: 187228
+  - text: 'blinded '
+    start_ms: 187751
+  - text: 'by '
+    start_ms: 188259
+  - text: 'the '
+    start_ms: 188559
+  - text: lights
+    start_ms: 188990
+- text: No, I can't sleep until I feel your touch"
+  start_ms: 190170
+  end_ms: 194450
+  words:
+  - text: 'No, '
+    start_ms: 190209
+  - text: 'I '
+    start_ms: 190367
+  - text: 'can''t '
+    start_ms: 190445
+  - text: 'sleep '
+    start_ms: 190828
+  - text: 'until '
+    start_ms: 191481
+  - text: 'I '
+    start_ms: 192139
+  - text: 'feel '
+    start_ms: 192302
+  - text: 'your '
+    start_ms: 192634
+  - text: touch"
+    start_ms: 193355
+plain: |
+  Yeah
+
+  I've been tryna call
+  I've been on my own for long enough
+  Maybe you can show me how to love, maybe
+  I'm goin' through withdrawals
+  You don't even have to do too much
+  You can turn me on with just a touch, baby
+
+  I look around and
+  Sin City's cold and empty (Oh)
+  No one's around to judge me (Oh)
+  I can't see clearly when you're gone
+
+  I said, "Ooh, I'm blinded by the lights
+  No, I can't sleep until I feel your touch" (Touch)
+  I said, "Ooh, I'm drowning in the night
+  Oh, when I'm like this, you're the one I trust"
+  (Hey, hey, hey)
+
+  I'm running out of time
+  'Cause I can see the sun light up the sky
+  So I hit the road in overdrive, baby, oh
+
+  The city's cold and empty (Oh)
+  No one's around to judge me (Oh)
+  I can't see clearly when you're gone
+
+  I said, "Ooh, I'm blinded by the lights
+  No, I can't sleep until I feel your touch" (Touch)
+  I said, "Ooh, I'm drowning in the night
+  Oh, when I'm like this, you're the one I trust"
+
+  I'm just coming back to let you know (Back to let you know)
+  I could never say it on the phone (Say it on the phone)
+  Will never let you go this time (Ooh)
+  I said, "Ooh, I'm blinded by the lights
+  No, I can't sleep until I feel your touch" (Touch)
+  (Hey, hey, hey)
+
+  (Hey, hey, hey)
+
+  I said, "Ooh, I'm blinded by the lights
+  No, I can't sleep until I feel your touch"

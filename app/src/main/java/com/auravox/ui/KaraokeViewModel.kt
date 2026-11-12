@@ -21,9 +21,13 @@ import com.auravox.audio.Presets
 import com.auravox.audio.ScaleType
 import com.auravox.audio.SongAnalyzer
 import com.auravox.audio.TrackDecoder
+import com.auravox.BuildConfig
 import com.auravox.karaoke.Exporter
+import com.auravox.karaoke.LyricsService
 import com.auravox.karaoke.Song
 import com.auravox.karaoke.SongRepository
+import com.auravox.separation.ModelStore
+import com.auravox.separation.VocalSeparator
 import com.auravox.karaoke.Take
 import com.auravox.karaoke.TakeLayer
 import com.auravox.update.GithubUpdater
@@ -60,6 +64,10 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     enum class StageMode { SING, OVERDUB, PLAYBACK }
 
     private val repo = SongRepository(app)
+
+    private val lyrics = LyricsService(BuildConfig.VERSION_NAME)
+    private val separator = VocalSeparator(app)
+    private var separateJob: kotlinx.coroutines.Job? = null
     private val decoder = TrackDecoder(app)
 
     private val transport = FloatArray(NativeAudio.T.SIZE)
@@ -80,6 +88,12 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     var current by mutableStateOf<Song?>(null); private set
     var activeTake by mutableStateOf<Take?>(null); private set
     var analyzing by mutableStateOf<String?>(null); private set
+    var fetchingLyrics by mutableStateOf<String?>(null); private set
+
+    /** Song being separated, with the stage of the job and how far it got. */
+    var separating by mutableStateOf<String?>(null); private set
+    var separatePhase by mutableStateOf(VocalSeparator.Phase.MODEL); private set
+    var separateProgress by mutableStateOf(0f); private set
     var analyzeProgress by mutableStateOf(0f); private set
 
     // --- engine ---
@@ -359,7 +373,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         activeTake = null
         stageMode = StageMode.SING
         set(Param.MONITOR_VOICE, 1f)
-        loadSource(Uri.parse(song.uri), song, 0.0)
+        loadSource(Uri.parse(song.playbackUri), song, 0.0)
     }
 
     /** Stacks a new voice on top of a take. The take's mix becomes the base. */
@@ -414,6 +428,10 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
             screen = Screen.LIBRARY
             return
         }
+
+        // With a separated backing track there is no centred voice left to
+        // subtract, and subtracting anyway would take the kick and the snare
+        if (song?.separated == true) write(Param.TRACK_VOCAL_REMOVE, 0f)
 
         val scoring = song != null && song.hasMelody && stageMode != StageMode.PLAYBACK
         NativeAudio.setMelody(if (song?.hasMelody == true) song.notes else null)
@@ -763,6 +781,14 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
             message = "${song.title}: ${result.noteCount} notas, ${
                 "%.0f".format(result.bpm)
             } BPM"
+
+            // The duration is only known once the analysis has read the file,
+            // and it is what picks the right take of a song, so the lookup
+            // waits for it
+            val analyzed = songs.firstOrNull { it.id == song.id }
+            if (analyzed != null && analyzed.lyrics.isEmpty()) {
+                fetchLyrics(analyzed, announce = false)
+            }
         }
     }
 
@@ -774,6 +800,153 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         }
         updateSong(song.copyWith(lyrics = lines))
         message = "${lines.size} linhas de letra carregadas."
+    }
+
+    /**
+     * Splits a song into a backing track and an isolated voice.
+     *
+     * Worth the wait twice over. The backing track is the one the user sings
+     * to, and subtracting the middle of the stereo image — which is all the
+     * app could do before — removes the kick and the snare along with the
+     * voice and leaves the voice wherever it was not dead centre. And the
+     * isolated voice is a far better thing to read the melody off than the
+     * whole mix, where the bass and the guitars compete with it for the pitch
+     * tracker's attention.
+     */
+    fun separate(song: Song) {
+        if (separating != null) {
+            message = "Uma separação já está em andamento."
+            return
+        }
+        separating = song.id
+        separatePhase = VocalSeparator.Phase.MODEL
+        separateProgress = 0f
+
+        separateJob = viewModelScope.launch {
+            val outcome = separator.separate(
+                uri = Uri.parse(song.uri),
+                songId = song.id,
+                keepVocal = true
+            ) { phase, progress ->
+                viewModelScope.launch(Dispatchers.Main) {
+                    separatePhase = phase
+                    separateProgress = progress
+                }
+            }
+            separating = null
+            separateProgress = 0f
+
+            when (outcome) {
+                is VocalSeparator.Result.Done -> {
+                    val stems = outcome.stems
+                    updateSong(
+                        song.copyWith(
+                            instrumentalPath = stems.instrumental.absolutePath,
+                            vocalPath = stems.vocal?.absolutePath,
+                            separatedAt = System.currentTimeMillis()
+                        )
+                    )
+                    message = "Vocal separado. A base já está pronta para cantar."
+                    // The melody is worth taking again now that there is a
+                    // clean voice to take it from
+                    stems.vocal?.let { analyzeMelodyFromStem(song.id, it) }
+                }
+                is VocalSeparator.Result.Failed -> message = outcome.reason
+                VocalSeparator.Result.Cancelled -> message = "Separação cancelada."
+            }
+        }
+    }
+
+    fun cancelSeparation() {
+        separateJob?.cancel()
+        separateJob = null
+    }
+
+    /** Throws the stems away, freeing roughly eighty megabytes a song. */
+    fun discardStems(song: Song) {
+        separator.discard(song.id)
+        updateSong(
+            song.copyWith(
+                instrumentalPath = null, vocalPath = null,
+                separatedAt = 0L, melodyFromStem = false
+            )
+        )
+        message = "Base separada apagada. A música volta a tocar do original."
+    }
+
+    /** Frees the downloaded models. They come back the next time they are needed. */
+    fun discardModels() {
+        ModelStore.clear(getApplication())
+        message = "Modelos de separação apagados."
+    }
+
+    /**
+     * Re-reads the melody from the isolated voice.
+     *
+     * This is where most of the scoring improvement lives. The tracker was
+     * being asked to find a sung note in a full mix, with a bass line an
+     * octave below it and guitars across the same range; on a voice by itself
+     * it is the only thing in the file.
+     */
+    private fun analyzeMelodyFromStem(songId: String, stem: File) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.Default) {
+                SongAnalyzer.analyze(getApplication(), Uri.fromFile(stem)) { }
+            } ?: return@launch
+            if (result.noteCount <= 0) return@launch
+
+            val song = songs.firstOrNull { it.id == songId } ?: return@launch
+            updateSong(
+                song.copyWith(
+                    keyRoot = result.keyRoot,
+                    keyMode = result.keyMode,
+                    keyConfidence = result.keyConfidence,
+                    notes = result.notes,
+                    analyzed = true,
+                    melodyFromStem = true
+                )
+            )
+            message = "Melodia relida do vocal isolado: ${result.noteCount} notas."
+        }
+    }
+
+    /**
+     * Looks the lyric up instead of asking the user for a file.
+     *
+     * Runs on its own after an import, because a karaoke app that needs a .lrc
+     * hunted down before it can be used is a karaoke app nobody uses. The
+     * manual import stays for the songs no database has.
+     */
+    fun fetchLyrics(song: Song, announce: Boolean = true) {
+        if (fetchingLyrics != null) return
+        fetchingLyrics = song.id
+
+        viewModelScope.launch {
+            val outcome = lyrics.resolve(
+                title = song.title,
+                artist = song.artist,
+                album = null,
+                durationMs = song.durationMs
+            )
+            fetchingLyrics = null
+
+            when (outcome) {
+                is LyricsService.Outcome.Found -> {
+                    updateSong(song.copyWith(lyrics = outcome.lines))
+                    message = buildString {
+                        append(outcome.lines.size)
+                        append(" linhas de letra")
+                        if (outcome.wordSynced) append(", sincronizadas por palavra")
+                    }
+                }
+                LyricsService.Outcome.Instrumental ->
+                    if (announce) message = "\"${song.title}\" está marcada como instrumental."
+                LyricsService.Outcome.NotFound ->
+                    if (announce) message = "Nenhuma letra sincronizada encontrada."
+                is LyricsService.Outcome.Failed ->
+                    if (announce) message = "Busca de letra falhou: ${outcome.reason}"
+            }
+        }
     }
 
     fun deleteSong(song: Song) {

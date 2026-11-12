@@ -14,6 +14,7 @@
 #include "dsp/Metronome.h"
 #include "dsp/Mixer.h"
 #include "dsp/PitchDetector.h"
+#include "dsp/Resampler.h"
 #include "dsp/Stft.h"
 #include "separation/Separator.h"
 #include "dsp/TimeScale.h"
@@ -978,6 +979,105 @@ static void testAutotuneBehaviour() {
     }
 }
 
+// ------------------------------------------------------------ reamostragem
+
+/**
+ * Rate conversion for the separation pass.
+ *
+ * The point of a sinc kernel over a cheap interpolator is the band it removes,
+ * so that is what gets measured: a tone above the output Nyquist has to come
+ * back attenuated rather than folded down into the audible range, because a
+ * folded tone is a frequency the separator would then try to assign to a
+ * singer.
+ */
+static void testResampler() {
+    section("Reamostragem");
+
+    // --- 48k to 44.1k, the conversion that actually happens ---
+    {
+        Resampler r;
+        check(r.prepare(48000.0, 44100.0), "prepara 48k para 44.1k", "");
+        const int inN = 48000;
+        std::vector<float> in((size_t) inN);
+        for (int i = 0; i < inN; ++i) {
+            in[(size_t) i] = 0.4f * std::sin(2.0f * (float) M_PI * 1000.0f * (float) i / 48000.0f);
+        }
+        const int outN = r.outputFrames(inN);
+        std::vector<float> out((size_t) outN);
+        r.process(in.data(), inN, out.data(), outN);
+
+        check(std::abs(outN - 44100) <= 2, "o numero de amostras bate com a taxa",
+              fmtI2("%d, esperado ~%d", outN, 44100));
+
+        // Skip the kernel's reach at both ends
+        const int lo = 64, len = outN - 128;
+        const float got = magnitudeAt(out.data() + lo, len, 1000.0f, 44100);
+        check(got > 0.38f && got < 0.42f, "um tom de 1 kHz atravessa com o nivel certo",
+              fmt("%.4f de 0.4000", got));
+
+        // Measured against its own neighbours rather than with the harmonic
+        // estimator, whose search grid is ten cents wide and so cannot resolve
+        // this: correlating at exactly 1 kHz over a second of audio would not
+        // return full amplitude if the tone had moved
+        const float below = magnitudeAt(out.data() + lo, len, 1000.0f * 0.9885f, 44100);
+        const float above = magnitudeAt(out.data() + lo, len, 1000.0f * 1.0116f, 44100);
+        check(got > below * 20.0f && got > above * 20.0f,
+              "e na frequencia certa, nao 20 cents ao lado",
+              fmt2("1 kHz %.4f, pior vizinho %.4f", got, std::max(below, above)));
+    }
+
+    // --- the band that would alias ---
+    {
+        Resampler r;
+        r.prepare(48000.0, 44100.0);
+        const int inN = 48000;
+        std::vector<float> in((size_t) inN);
+        // 23 kHz is under the input Nyquist and over the output one, so it has
+        // nowhere to go: a resampler without a filter folds it to 21.1 kHz
+        for (int i = 0; i < inN; ++i) {
+            in[(size_t) i] = 0.4f * std::sin(2.0f * (float) M_PI * 23000.0f * (float) i / 48000.0f);
+        }
+        const int outN = r.outputFrames(inN);
+        std::vector<float> out((size_t) outN);
+        r.process(in.data(), inN, out.data(), outN);
+
+        const int lo = 64, len = outN - 128;
+        const float folded = magnitudeAt(out.data() + lo, len, 21100.0f, 44100);
+        // 32 taps put 23 kHz inside the transition band rather than the
+        // stopband, so the rejection is in the twenties of dB and not the
+        // sixties. That is the right trade: the alternative is rolling the
+        // cutoff down into the audible top octave to buy rejection of a
+        // frequency nobody can hear and few recordings contain
+        const float dB = 20.0f * std::log10(std::max(folded, 1e-9f) / 0.4f);
+        check(folded < 0.03f, "a banda que iria aliasar e atenuada, nao dobrada",
+              fmt2("%.4f em 21.1 kHz, %.0f dB abaixo", folded, dB));
+    }
+
+    // --- nothing to do is free ---
+    {
+        Resampler r;
+        r.prepare(44100.0, 44100.0);
+        check(r.passthrough(), "mesma taxa e reconhecida como passagem direta", "");
+    }
+
+    // --- 44.1k to 48k, for completeness ---
+    {
+        Resampler r;
+        r.prepare(44100.0, 48000.0);
+        const int inN = 44100;
+        std::vector<float> in((size_t) inN);
+        for (int i = 0; i < inN; ++i) {
+            in[(size_t) i] = 0.4f * std::sin(2.0f * (float) M_PI * 440.0f * (float) i / 44100.0f);
+        }
+        const int outN = r.outputFrames(inN);
+        std::vector<float> out((size_t) outN);
+        r.process(in.data(), inN, out.data(), outN);
+        const int lo = 64, len = outN - 128;
+        const float got = magnitudeAt(out.data() + lo, len, 440.0f, 48000);
+        check(got > 0.38f && got < 0.42f, "subir a taxa mantem o nivel", fmt("%.4f", got));
+    }
+}
+
 // -------------------------------------------------------------- separacao
 
 /**
@@ -1209,6 +1309,7 @@ int main() {
     testTimeScaleRateMath();
     testAutotuneBehaviour();
     testStft();
+    testResampler();
     testSeparator();
     testVocalRemover();
     testVocoder();

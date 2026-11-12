@@ -24,9 +24,26 @@ class Song(
     val addedAt: Long = System.currentTimeMillis(),
     val bestScore: Float = 0f,
     val timesPlayed: Int = 0,
-    val analyzed: Boolean = false
+    val analyzed: Boolean = false,
+    /**
+     * Backing track with the voice taken out by the separation model, or null
+     * when the song has not been separated.
+     *
+     * When this is set it is what plays, and the mid/side canceller is held at
+     * zero: there is nothing left for it to cancel and it would only take the
+     * kick and the snare with it.
+     */
+    val instrumentalPath: String? = null,
+    /** The isolated voice, kept for the melody guide and the guide vocal. */
+    val vocalPath: String? = null,
+    val separatedAt: Long = 0L,
+    /** True when the melody came from the isolated voice, not the whole mix. */
+    val melodyFromStem: Boolean = false
 ) {
     val noteCount: Int get() = notes.size / 3
+    val separated: Boolean get() = !instrumentalPath.isNullOrBlank()
+    /** What the stage should play: the separated backing track if there is one. */
+    val playbackUri: String get() = instrumentalPath?.let { "file://$it" } ?: uri
     val hasLyrics: Boolean get() = lyrics.isNotEmpty()
     val hasMelody: Boolean get() = noteCount > 0
 
@@ -65,10 +82,15 @@ class Song(
         lyrics: List<LyricLine> = this.lyrics,
         bestScore: Float = this.bestScore,
         timesPlayed: Int = this.timesPlayed,
-        analyzed: Boolean = this.analyzed
+        analyzed: Boolean = this.analyzed,
+        instrumentalPath: String? = this.instrumentalPath,
+        vocalPath: String? = this.vocalPath,
+        separatedAt: Long = this.separatedAt,
+        melodyFromStem: Boolean = this.melodyFromStem
     ) = Song(
         id, title, artist, uri, durationMs, keyRoot, keyMode, keyConfidence,
-        bpm, notes, lyrics, addedAt, bestScore, timesPlayed, analyzed
+        bpm, notes, lyrics, addedAt, bestScore, timesPlayed, analyzed,
+        instrumentalPath, vocalPath, separatedAt, melodyFromStem
     )
 
     override fun equals(other: Any?) = other is Song && other.id == id

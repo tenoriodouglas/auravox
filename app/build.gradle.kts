@@ -25,10 +25,13 @@ android {
         }
 
         ndk {
-            // 32-bit ARM is dropped: no modern device needs it and it doubles
-            // the build time
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            // Phones only. 32-bit ARM is gone because no current device needs
+            // it, and x86_64 is gone because the separation runtime is 40 MB
+            // of native code for that architecture alone — carried by every
+            // download, run by an emulator nobody ships to.
+            abiFilters += "arm64-v8a"
         }
+
     }
 
     externalNativeBuild {
@@ -77,6 +80,10 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.documentfile:documentfile:1.0.1")
+    // Runs the separation models. ONNX rather than TFLite because the graph
+    // needs no FFT operators at all: the transform stays in our own C++, which
+    // is exactly what sank the TFLite ports of this model
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.1")
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")

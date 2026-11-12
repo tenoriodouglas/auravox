@@ -8,6 +8,7 @@ find_package(oboe REQUIRED CONFIG)
 
 add_library(auravox SHARED
         native-lib.cpp
+        separation-jni.cpp
         AudioEngine.cpp)
 
 target_include_directories(auravox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

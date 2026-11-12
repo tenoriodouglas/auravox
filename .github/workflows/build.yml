@@ -22,6 +22,65 @@ jobs:
       # parte que pode quebrar em silencio e testada sem emulador nem SDK
       - run: tools/run_tests.sh
 
+  # Os pesos da separacao nao entram no APK nem no repositorio: 38 MB que todo
+  # mundo baixaria, inclusive quem so importa instrumental. Ficam numa release
+  # propria e o app busca na primeira vez que precisa.
+  #
+  # Upstream publica so um .tar.bz2, e o Android nao tem bzip2 na biblioteca
+  # padrao. Entao este passo extrai uma vez e republica os dois .onnx soltos,
+  # com o hash que o app confere antes de usar. Roda uma vez: se a release ja
+  # tem os arquivos, nao faz nada.
+  modelos:
+    name: Modelos de separacao
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Verificar se ja estao publicados
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eo pipefail
+          have=0
+          if gh release view models-latest --repo "${{ github.repository }}" \
+               --json assets --jq '.assets[].name' 2>/dev/null \
+               | grep -qx "vocals.fp16.onnx"; then
+            have=1
+          fi
+          echo "have=$have" >> "$GITHUB_OUTPUT"
+
+      - name: Extrair do upstream
+        if: steps.check.outputs.have == '0'
+        run: |
+          set -eo pipefail
+          URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/source-separation-models/sherpa-onnx-spleeter-2stems-fp16.tar.bz2
+          curl -sSL --retry 3 -o models.tar.bz2 "$URL"
+          tar xjf models.tar.bz2
+          mkdir -p models
+          mv sherpa-onnx-spleeter-2stems-fp16/*.onnx models/
+          cd models
+          sha256sum *.onnx | tee SHA256SUMS
+          # Os mesmos hashes estao em ModelStore.kt; se mudarem, o app recusa
+          # o arquivo em vez de separar mal, e este passo falha aqui primeiro
+          grep -q "24cef84aedcd1fe87c0b743ef3370ad34dc1fabf6c9014d6128a75a538c7b668  vocals.fp16.onnx" SHA256SUMS
+          grep -q "d14cea55793cc531a5875f5f4da08207d1c5ab9292e8e0099a104eecb014fcc0  accompaniment.fp16.onnx" SHA256SUMS
+
+      - name: Publicar
+        if: steps.check.outputs.have == '0'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: models-latest
+          name: Modelos de separacao de vocal
+          body: >
+            Pesos do Spleeter 2stems (Deezer, MIT) convertidos para ONNX pelo
+            projeto sherpa-onnx (Apache 2.0), reempacotados soltos porque o
+            Android nao le .tar.bz2. O app confere o SHA-256 antes de usar.
+          prerelease: true
+          files: |
+            models/vocals.fp16.onnx
+            models/accompaniment.fp16.onnx
+            models/SHA256SUMS
+
   apk:
     name: APK
     runs-on: ubuntu-latest
