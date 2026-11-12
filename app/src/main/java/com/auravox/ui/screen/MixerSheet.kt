@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Balance
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Save
@@ -355,7 +356,21 @@ private fun VoiceTab(vm: KaraokeViewModel) {
 
 @Composable
 private fun PlaybackTab(vm: KaraokeViewModel) {
-    Header("Música")
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Header("Música")
+        TextButton(onClick = { vm.autoMix() }) {
+            Icon(Icons.Filled.Balance, null, tint = Aura.Teal)
+            Text("  Equilibrar", color = Aura.Teal)
+        }
+    }
+    Note(
+        "Equilibrar mede a voz e a base com a mesma ponderação e mexe só no " +
+            "volume da base. Cante alguns segundos com a música tocando primeiro."
+    )
     ParamSlider(vm, Param.TRACK_GAIN, "Volume", 0f, 1.5f) { "%.2f".format(it) }
     ParamSlider(vm, Param.TRACK_KEY_SHIFT, "Mudar o tom", -12f, 12f, steps = 23) {
         "${if (it > 0) "+" else ""}${it.roundToInt()} semitons"

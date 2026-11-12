@@ -97,6 +97,7 @@ public:
     int xrunCount() const { return xruns_.load(std::memory_order_relaxed); }
 
     float outputLevel() const { return mixer_.peak(); }
+    const Mixer &mixer() const { return mixer_; }
 
     /** Capture slack currently held, in frames. Grows on a jittery device. */
     int inputCushionFrames() const { return fifoPolicy_.cushion; }

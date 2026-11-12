@@ -289,6 +289,25 @@ Java_com_auravox_audio_NativeAudio_nativeGetScoreState(JNIEnv *env, jobject, jfl
 }
 
 /**
+ * Weighted level of each bus, for the one-tap balance.
+ *
+ * Its own call rather than another slot in the per-frame array: this is read
+ * when a button is pressed, not sixty times a second, and the hot path should
+ * not carry it.
+ */
+JNIEXPORT void JNICALL
+Java_com_auravox_audio_NativeAudio_nativeGetBalance(JNIEnv *env, jobject, jfloatArray out) {
+    if (!gEngine) return;
+    const auto &m = gEngine->mixer();
+    float v[4];
+    v[0] = m.voiceLoudnessDb();
+    v[1] = m.trackLoudnessDb();
+    v[2] = m.voiceHasSignal() ? 1.0f : 0.0f;
+    v[3] = m.trackHasSignal() ? 1.0f : 0.0f;
+    env->SetFloatArrayRegion(out, 0, 4, v);
+}
+
+/**
  * Meters the performance screen polls every frame, in one transition:
  * level, output level, pitch midi, cents off, latency, align, position ms,
  * playing, finished, xruns, underruns, count-in beats left, output latency,

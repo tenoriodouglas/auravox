@@ -11,6 +11,7 @@
 
 #include "dsp/FxChain.h"
 #include "dsp/InputFifo.h"
+#include "dsp/Loudness.h"
 #include "dsp/Metronome.h"
 #include "dsp/Mixer.h"
 #include "dsp/PitchDetector.h"
@@ -979,6 +980,73 @@ static void testAutotuneBehaviour() {
     }
 }
 
+// --------------------------------------------------------------- loudness
+
+/**
+ * The weighting, and the one thing it is for.
+ *
+ * Balancing on peaks or on plain RMS is why an amateur mix comes back with the
+ * voice buried: a bass line at the same level as a voice is nowhere near as
+ * loud to the ear. So what gets checked is that a bass-heavy signal measures
+ * quieter than a voice-range one at the same RMS, and that two signals of the
+ * same content differ by exactly the gain between them — which is the number
+ * the balance action acts on.
+ */
+static void testLoudness() {
+    section("Loudness");
+
+    auto measure = [](float freq, float amp, int sr) {
+        Loudness l;
+        l.prepare(sr, 400.0f);
+        const int n = sr * 3;
+        for (int i = 0; i < n; ++i) {
+            l.push(amp * std::sin(2.0f * (float) M_PI * freq * (float) i / (float) sr));
+        }
+        return l.db();
+    };
+
+    const float bass = measure(50.0f, 0.3f, kSr);
+    const float voice = measure(1000.0f, 0.3f, kSr);
+    const float high = measure(6000.0f, 0.3f, kSr);
+
+    // Four to five dB is what this weighting actually does at 50 Hz, not the
+    // ten one might expect: the high-pass corner sits at 38 Hz, so 50 Hz is
+    // already above it and only partly attenuated. The point stands either
+    // way — a bass line reads quieter than a voice at the same RMS, which is
+    // what balancing on plain RMS gets wrong
+    check(voice > bass + 3.5f, "o grave pesa menos que a voz no mesmo RMS",
+          fmt2("50 Hz %.1f dB, 1 kHz %.1f dB", bass, voice));
+    const float deep = measure(25.0f, 0.3f, kSr);
+    check(voice > deep + 9.0f, "e um grave bem abaixo do corte pesa muito menos",
+          fmt2("25 Hz %.1f dB, 1 kHz %.1f dB", deep, voice));
+    check(high > voice, "o agudo pesa um pouco mais que a voz",
+          fmt2("6 kHz %.1f dB, 1 kHz %.1f dB", high, voice));
+
+    // The difference between two buses is the only number the balance uses, so
+    // it has to be exactly the gain between them
+    const float quiet = measure(1000.0f, 0.15f, kSr);
+    const float delta = voice - quiet;
+    check(std::fabs(delta - 6.02f) < 0.2f, "metade da amplitude da 6 dB de diferenca",
+          fmt("%.2f dB", delta));
+
+    // Silence reads as a floor, not as minus infinity, or the balance would
+    // divide by nothing the moment nobody is singing
+    {
+        Loudness l;
+        l.prepare(kSr, 400.0f);
+        for (int i = 0; i < kSr; ++i) l.push(0.0f);
+        check(l.db() < -90.0f && std::isfinite(l.db()), "silencio tem piso finito",
+              fmt("%.1f dB", l.db()));
+        check(!l.hasSignal(), "e nao conta como sinal", "");
+    }
+
+    // The same thing at another rate must not read differently, or a 44.1 kHz
+    // stem and a 48 kHz device would balance against each other wrongly
+    const float at441 = measure(1000.0f, 0.3f, 44100);
+    check(std::fabs(at441 - voice) < 0.5f, "a leitura nao depende da taxa",
+          fmt2("44.1k %.1f dB, 48k %.1f dB", at441, voice));
+}
+
 // ------------------------------------------------------------ reamostragem
 
 /**
@@ -1309,6 +1377,7 @@ int main() {
     testTimeScaleRateMath();
     testAutotuneBehaviour();
     testStft();
+    testLoudness();
     testResampler();
     testSeparator();
     testVocalRemover();

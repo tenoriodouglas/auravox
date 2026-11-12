@@ -459,6 +459,50 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * One tap to put the voice above the backing track.
+     *
+     * The commonest thing wrong with a home recording is the balance, and the
+     * faders do not help because nobody knows which number is right. This
+     * measures both buses through the same weighting and moves the track gain
+     * until the voice sits a few dB above it.
+     *
+     * Only the track moves. The voice gain is the singer's microphone and the
+     * headroom they have; touching it is how a balance tool turns into a
+     * clipping tool.
+     */
+    fun autoMix() {
+        val out = FloatArray(4)
+        NativeAudio.balance(out)
+        val voiceDb = out[0]
+        val trackDb = out[1]
+        if (out[2] < 0.5f || out[3] < 0.5f) {
+            message = "Cante alguns segundos com a música tocando para eu medir."
+            return
+        }
+
+        // Where the voice should sit above the backing track for karaoke
+        val targetGap = 4.0f
+        val gap = voiceDb - trackDb
+        val change = gap - targetGap
+        if (kotlin.math.abs(change) < 0.6f) {
+            message = "O equilíbrio já está bom: a voz está ${
+                "%.1f".format(gap)
+            } dB acima da base."
+            return
+        }
+
+        val current = get(Param.TRACK_GAIN)
+        val scaled = (current * Math.pow(10.0, (change / 20.0)).toFloat())
+            .coerceIn(0.05f, 1.5f)
+        set(Param.TRACK_GAIN, scaled)
+        message = if (change > 0f) {
+            "Base subiu: a voz estava ${"%.1f".format(gap)} dB acima dela."
+        } else {
+            "Base abaixou: a voz estava ${"%.1f".format(gap)} dB acima dela."
+        }
+    }
+
     fun setGuideVocal(level: Float) {
         guideVocalLevel = level.coerceIn(0f, 1f)
         decoder.guideLevel = guideVocalLevel

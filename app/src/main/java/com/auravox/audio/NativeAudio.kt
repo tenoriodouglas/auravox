@@ -73,6 +73,9 @@ object NativeAudio {
     fun pitchMidi(): Float = nativeGetPitchMidi()
 
     fun transportState(out: FloatArray) = nativeGetTransportState(out)
+
+    /** [voiceDb, trackDb, voiceHasSignal, trackHasSignal] for the balance action. */
+    fun balance(out: FloatArray) = nativeGetBalance(out)
     fun scoreState(out: FloatArray) = nativeGetScoreState(out)
 
     /** mixPath gets the full mix, stemPath the processed voice alone. */
@@ -164,5 +167,6 @@ object NativeAudio {
     private external fun nativeSetScoringEnabled(on: Boolean)
     private external fun nativeGetScoreState(out: FloatArray)
     private external fun nativeGetTransportState(out: FloatArray)
+    private external fun nativeGetBalance(out: FloatArray)
     private external fun nativeAnalyze(mono: FloatArray, frames: Int): FloatArray
 }

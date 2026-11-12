@@ -5,6 +5,7 @@
 #include <vector>
 #include "../Params.h"
 #include "Dynamics.h"
+#include "Loudness.h"
 
 namespace av {
 
@@ -26,6 +27,8 @@ public:
         recordDuck_.prepare(sampleRate);
         monitorLimiter_.prepare(sampleRate);
         recordLimiter_.prepare(sampleRate);
+        voiceLoudness_.prepare(sampleRate);
+        trackLoudness_.prepare(sampleRate);
 
         const int n = (int) (maxAlignMs * 0.001f * (float) sampleRate) + 4;
         delay_.assign((size_t) n * 2, 0.0f);
@@ -54,6 +57,18 @@ public:
     int alignSamples() const { return alignSamples_.load(std::memory_order_relaxed); }
 
     /**
+     * Weighted level of each bus, for balancing one against the other.
+     *
+     * Published from the callback and read by the UI thread, which is why they
+     * are atomics. Not LUFS: see Loudness.h for why the difference between the
+     * two is the only thing these are good for.
+     */
+    float voiceLoudnessDb() const { return voiceDb_.load(std::memory_order_relaxed); }
+    float trackLoudnessDb() const { return trackDb_.load(std::memory_order_relaxed); }
+    bool voiceHasSignal() const { return voiceLive_.load(std::memory_order_relaxed); }
+    bool trackHasSignal() const { return trackLive_.load(std::memory_order_relaxed); }
+
+    /**
      * Audio thread. voice and track are interleaved stereo, click is mono and
      * may be null. monitor is written always; record may be null.
      */
@@ -72,6 +87,11 @@ public:
             const float vl = voice[i * 2], vr = voice[i * 2 + 1];
             const float tl = track[i * 2], tr = track[i * 2 + 1];
             const float sidechain = (vl + vr) * 0.5f;
+
+            // Measured before the monitor gain and the ducker, so the reading
+            // is what the two buses carry rather than what the headphones got
+            voiceLoudness_.pushStereo(vl, vr);
+            trackLoudness_.pushStereo(tl, tr);
 
             // The take always gets the full voice; only what reaches the
             // headphones is attenuated. Singing on a speaker means turning the
@@ -113,6 +133,12 @@ public:
         }
         lastPeak_ = peak_;
         peak_ = 0.0f;
+
+        // Once per block, not per frame: the UI reads these at screen rate
+        voiceDb_.store(voiceLoudness_.db(), std::memory_order_relaxed);
+        trackDb_.store(trackLoudness_.db(), std::memory_order_relaxed);
+        voiceLive_.store(voiceLoudness_.hasSignal(), std::memory_order_relaxed);
+        trackLive_.store(trackLoudness_.hasSignal(), std::memory_order_relaxed);
     }
 
     float peak() const { return lastPeak_; }
@@ -124,9 +150,14 @@ public:
         lastPeak_ = 0.0f;
         monitorDuck_.reset(); recordDuck_.reset();
         monitorLimiter_.reset(); recordLimiter_.reset();
+        voiceLoudness_.reset(); trackLoudness_.reset();
     }
 
 private:
+    Loudness voiceLoudness_, trackLoudness_;
+    std::atomic<float> voiceDb_{-100.0f}, trackDb_{-100.0f};
+    std::atomic<bool> voiceLive_{false}, trackLive_{false};
+
     int sr_ = 48000;
     std::vector<float> delay_;
     int delayFrames_ = 0, writeIdx_ = 0;
