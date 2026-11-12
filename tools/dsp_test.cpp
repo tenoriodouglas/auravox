@@ -3,6 +3,7 @@
 //
 //   tools/run_tests.sh
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 
@@ -13,6 +14,7 @@
 #include "dsp/Metronome.h"
 #include "dsp/Mixer.h"
 #include "dsp/PitchDetector.h"
+#include "dsp/Stft.h"
 #include "dsp/TimeScale.h"
 #include "dsp/VocalRemover.h"
 #include "dsp/Vocoder.h"
@@ -774,6 +776,293 @@ static void testCpu() {
           fmt("%.2f%% de tempo real (x86)", load));
 }
 
+// --------------------------------------------------------------- autotune
+
+/** Tone whose pitch follows a function of time, by integrating the phase. */
+template <typename F>
+static std::vector<float> warpedTone(F midiAt, int sampleRate, int frames, float amp = 0.22f) {
+    std::vector<float> out((size_t) frames);
+    double phase = 0.0;
+    for (int i = 0; i < frames; ++i) {
+        const float midi = midiAt((float) i / (float) sampleRate);
+        const double f = 440.0 * std::pow(2.0, ((double) midi - 69.0) / 12.0);
+        phase += f / (double) sampleRate;
+        float v = 0.0f;
+        for (int h = 1; h <= 10; ++h) v += (float) std::sin(2.0 * M_PI * phase * h) / (float) h;
+        out[(size_t) i] = v * amp;
+    }
+    return out;
+}
+
+/** Every voiced estimate the detector produces over a signal. */
+static std::vector<float> trackMidi(const std::vector<float> &x, int sampleRate) {
+    PitchDetector d;
+    d.prepare(sampleRate);
+    std::vector<float> out;
+    for (float s : x) {
+        if (d.push(s) && d.voiced()) out.push_back(d.midi());
+    }
+    return out;
+}
+
+/** Runs a voice through the processor and returns the lead output. */
+static std::vector<float> runVoice(VoiceProcessor &vp, const std::vector<float> &x) {
+    std::vector<float> out(x.size());
+    float harm[3];
+    for (size_t i = 0; i < x.size(); ++i) out[i] = vp.process(x[i], harm);
+    return out;
+}
+
+static void peakToPeak(const std::vector<float> &v, size_t skip, float &lo, float &hi) {
+    lo = 1e30f;
+    hi = -1e30f;
+    for (size_t i = skip; i < v.size(); ++i) {
+        lo = std::min(lo, v[i]);
+        hi = std::max(hi, v[i]);
+    }
+}
+
+/** Median absolute deviation from a value. Robust to a tracker glitch. */
+static float medianError(const std::vector<float> &v, size_t from, size_t to, float ref) {
+    std::vector<float> e;
+    for (size_t i = from; i < v.size() && i < to; ++i) e.push_back(std::fabs(v[i] - ref));
+    if (e.empty()) return 99.0f;
+    std::sort(e.begin(), e.end());
+    return e[e.size() / 2];
+}
+
+static float meanOf(const std::vector<float> &v, size_t skip) {
+    double sum = 0.0;
+    size_t n = 0;
+    for (size_t i = skip; i < v.size(); ++i) { sum += v[i]; ++n; }
+    return n > 0 ? (float) (sum / n) : 0.0f;
+}
+
+/**
+ * The behaviours that decide whether a correction sounds professional.
+ *
+ * None of them is about where the note lands: a snap to the nearest scale
+ * note is arithmetic and was already right. These are about when the pitch
+ * moves, which is the whole of the difference.
+ */
+static void testAutotuneBehaviour() {
+    section("Autotune");
+
+    // --- a committed note, so a voice on the midpoint does not warble ---
+    {
+        VoiceProcessor vp;
+        vp.prepare(kSr);
+        vp.amount = 1.0f;
+        vp.scale = ScaleType::Chromatic;
+
+        const int n = kSr * 3;
+        auto x = warpedTone([](float t) { return 60.0f + t / 3.0f; }, kSr, n);
+        float switchAt = -1.0f;
+        float harm[3];
+        for (int i = 0; i < n; ++i) {
+            vp.process(x[(size_t) i], harm);
+            if (switchAt < 0.0f && vp.committedMidi() > 60.5f) {
+                switchAt = 60.0f + (float) i / (float) kSr / 3.0f;
+            }
+        }
+        check(switchAt > 60.55f && switchAt < 60.85f,
+              "a nota troca com folga, nao no meio", fmt("trocou em %.2f", switchAt));
+    }
+
+    /*
+     * A fast attack, so the move to a new note is in tune quickly.
+     *
+     * The voice jumps to a note a whole tone below the one the melody is on,
+     * which is a correction of a full semitone once the guide claims it. With
+     * a slow retune that semitone arrives over the next half second; the
+     * attack is what puts it there at once.
+     */
+    {
+        const int n = kSr;
+        auto x = warpedTone([](float t) { return t < 0.5f ? 60.0f : 63.0f; }, kSr, n);
+        const int jumpFrame = (int) (0.5f * kSr / 1024.0f);
+
+        auto medianOff = [&](float onsetMs) {
+            VoiceProcessor vp;
+            vp.prepare(kSr);
+            vp.amount = 1.0f;
+            vp.scale = ScaleType::Chromatic;
+            vp.useGuide = true;
+            vp.guideMidi = 64.0f;
+            vp.setRetuneMs(400.0f);
+            vp.setOnsetMs(onsetMs);
+            auto y = runVoice(vp, x);
+            auto midi = trackMidi(y, kSr);
+            // From four frames after the jump, by median: the detector reports
+            // on the middle of a 43 ms window, so the frames spanning the jump
+            // describe a pitch that is partly the old note whatever we do, and
+            // a few of them come back an octave out. That is the measuring
+            // tracker misreading, not the shifter — a spectral estimate of a
+            // steady shift lands within a cent of what was asked for.
+            return medianError(midi, (size_t) jumpFrame + 4, (size_t) jumpFrame + 14, 64.0f);
+        };
+
+        const float withOnset = medianOff(8.0f);
+        const float without = medianOff(400.0f);  // attack as slow as the retune
+        check(withOnset < 0.15f, "o ataque corrige a troca de nota",
+              fmt("erro mediano %.3f semitom", withOnset));
+        check(without - withOnset > 0.4f, "sem ataque a nota nova fica desafinada",
+              fmt2("%.3f sem, %.3f com", without, withOnset));
+    }
+
+    /*
+     * The note is fixed and the expression is kept.
+     *
+     * A singer holding a note half a semitone sharp with vibrato on it should
+     * come out on the note with the vibrato still there. Aiming at the instant
+     * pitch instead would try to hold the voice still, which a time-domain
+     * shifter cannot do at a ratio near one, and the correction then fights
+     * the vibrato instead of the error.
+     */
+    {
+        const int n = kSr * 2;
+        auto x = warpedTone(
+            [](float t) { return 60.5f + 0.4f * std::sin(2.0f * (float) M_PI * 4.0f * t); },
+            kSr, n);
+
+        VoiceProcessor vp;
+        vp.prepare(kSr);
+        vp.amount = 1.0f;
+        vp.setRetuneMs(25.0f);
+        vp.useGuide = true;
+        vp.guideMidi = 60.0f;  // the melody says which note, so no ambiguity
+
+        auto y = runVoice(vp, x);
+        auto inMidi = trackMidi(x, kSr);
+        auto outMidi = trackMidi(y, kSr);
+        const float inMean = meanOf(inMidi, inMidi.size() / 3);
+        const float outMean = meanOf(outMidi, outMidi.size() / 3);
+        float lo, hi;
+        peakToPeak(inMidi, inMidi.size() / 3, lo, hi);
+        const float inSwing = hi - lo;
+        peakToPeak(outMidi, outMidi.size() / 3, lo, hi);
+        const float outSwing = hi - lo;
+
+        check(std::fabs(outMean - 60.0f) < 0.12f, "a nota desafinada vai para o tom",
+              fmt2("entrou em %.2f, saiu em %.2f", inMean, outMean));
+        check(outSwing > inSwing * 0.7f, "e o vibrato do cantor continua la",
+              fmt2("%.2f semitom de %.2f", outSwing, inSwing));
+    }
+
+    // --- vibrato the app adds, for a voice with none ---
+    {
+        const int n = kSr * 2;
+        auto x = warpedTone([](float) { return 60.0f; }, kSr, n);
+
+        VoiceProcessor vp;
+        vp.prepare(kSr);
+        vp.amount = 0.0f;
+        vp.setVibrato(0.5f, 5.0f);
+        auto y = runVoice(vp, x);
+        auto midi = trackMidi(y, kSr);
+        float lo, hi;
+        peakToPeak(midi, midi.size() / 3, lo, hi);
+        check(hi - lo > 0.6f, "o vibrato gerado aparece na saida",
+              fmt("%.2f semitom de oscilacao", hi - lo));
+
+        // And costs nothing when it is off
+        VoiceProcessor off;
+        off.prepare(kSr);
+        off.amount = 0.0f;
+        off.setVibrato(0.0f, 5.0f);
+        auto flat = runVoice(off, x);
+        auto flatMidi = trackMidi(flat, kSr);
+        peakToPeak(flatMidi, flatMidi.size() / 3, lo, hi);
+        check(hi - lo < 0.1f, "sem vibrato a nota fica parada", fmt("%.3f semitom", hi - lo));
+    }
+}
+
+// -------------------------------------------------------------------- stft
+
+/**
+ * The transform the separation pass is built on.
+ *
+ * A mask-based separator is only as good as its round trip: whatever the model
+ * gets wrong, the transform must not add errors of its own on top. So the
+ * first thing to prove is that analysis followed by synthesis returns the
+ * input, and the second is that scaling the magnitudes actually moves the
+ * right energy.
+ */
+static void testStft() {
+    section("STFT");
+
+    // --- the FFT underneath ---
+    Fft fft;
+    fft.prepare(1024);
+    std::vector<float> re(1024), im(1024), re0(1024);
+    for (int i = 0; i < 1024; ++i) {
+        re[(size_t) i] = std::sin(2.0f * (float) M_PI * 5.0f * (float) i / 1024.0f)
+                       + 0.4f * std::cos(2.0f * (float) M_PI * 77.0f * (float) i / 1024.0f);
+        im[(size_t) i] = 0.0f;
+        re0[(size_t) i] = re[(size_t) i];
+    }
+    fft.forward(re.data(), im.data());
+
+    // Bin 5 should hold the sine: magnitude N/2 for unit amplitude
+    const float bin5 = std::sqrt(re[5] * re[5] + im[5] * im[5]);
+    const float bin40 = std::sqrt(re[40] * re[40] + im[40] * im[40]);
+    check(bin5 > 400.0f && bin40 < 1.0f, "a senoide cai no bin certo",
+          fmt2("bin5 %.0f, bin40 %.2f", bin5, bin40));
+
+    fft.inverse(re.data(), im.data());
+    float worst = 0.0f;
+    for (int i = 0; i < 1024; ++i) worst = std::max(worst, std::fabs(re[(size_t) i] - re0[(size_t) i]));
+    check(worst < 1e-4f, "FFT ida e volta devolve o sinal", fmt("erro %.2e", worst));
+
+    // --- analysis/synthesis round trip ---
+    const int n = 24000;
+    std::vector<float> x = tone(220.0f, kSr, n, 0.3f);
+    Stft stft;
+    stft.prepare(1024, 256);
+    const int frames = stft.frameCount(n);
+
+    std::vector<float> mag((size_t) stft.bins()), phase((size_t) stft.bins());
+    std::vector<float> y((size_t) n);
+    stft.beginSynthesis(n);
+    for (int f = 0; f < frames; ++f) {
+        stft.analyze(x.data(), n, f, mag.data(), phase.data());
+        stft.addFrame(mag.data(), phase.data(), f);
+    }
+    stft.finish(y.data());
+
+    worst = 0.0f;
+    for (int i = 0; i < n; ++i) worst = std::max(worst, std::fabs(y[(size_t) i] - x[(size_t) i]));
+    check(worst < 1e-3f, "analise e sintese reconstroem o sinal", fmt("erro maximo %.2e", worst));
+
+    // The edges matter: a song's first and last frame get fewer overlaps, and
+    // a separator that fades them would clip the start of every track
+    const float headIn = rms(x.data(), 256);
+    const float headOut = rms(y.data(), 256);
+    check(std::fabs(headIn - headOut) / headIn < 0.01f, "as bordas nao perdem nivel",
+          fmt2("entrada %.4f, saida %.4f", headIn, headOut));
+
+    // --- a mask moves the energy it is told to ---
+    std::vector<float> mix((size_t) n);
+    for (int i = 0; i < n; ++i) {
+        const float t = (float) i / (float) kSr;
+        mix[(size_t) i] = 0.3f * std::sin(2.0f * (float) M_PI * 300.0f * t)
+                        + 0.3f * std::sin(2.0f * (float) M_PI * 3000.0f * t);
+    }
+    const int cutBin = (int) (1000.0f / ((float) kSr / (float) stft.nFft()));
+    stft.beginSynthesis(n);
+    for (int f = 0; f < frames; ++f) {
+        stft.analyze(mix.data(), n, f, mag.data(), phase.data());
+        for (int k = cutBin; k < stft.bins(); ++k) mag[(size_t) k] = 0.0f;  // soft mask, hard here
+        stft.addFrame(mag.data(), phase.data(), f);
+    }
+    stft.finish(y.data());
+
+    const float kept = magnitudeAt(y.data() + 4096, 8192, 300.0f, kSr);
+    const float cut = magnitudeAt(y.data() + 4096, 8192, 3000.0f, kSr);
+    check(kept > 0.28f && kept < 0.32f, "a mascara preserva o que deve ficar", fmt("300 Hz %.3f", kept));
+    check(cut < 0.005f, "a mascara remove o que deve sair", fmt("3 kHz %.4f", cut));
+}
+
 int main() {
     std::printf("\n\033[1mAuraVox DSP\033[0m\n");
     testInputFifo();
@@ -787,6 +1076,8 @@ int main() {
     testTimeScaleTempo();
     testTimeScaleKey();
     testTimeScaleRateMath();
+    testAutotuneBehaviour();
+    testStft();
     testVocalRemover();
     testVocoder();
     testMonitorToggle();

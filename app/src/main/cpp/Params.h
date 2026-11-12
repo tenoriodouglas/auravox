@@ -52,6 +52,10 @@ enum ParamId {
     kVocoderCarrier,
     kVocoderSibilance,
     kPitchGuide,
+    kVibratoDepth,
+    kVibratoRate,
+    kOnsetSnapMs,
+    kLastVocalParam = kOnsetSnapMs,
 
     // --- backing track: 48..63 ---
     kTrackGain = 48,

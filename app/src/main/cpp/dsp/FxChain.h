@@ -73,6 +73,9 @@ public:
         p.set(kVocoderCarrier, 0.0f);
         p.set(kVocoderSibilance, 0.6f);
         p.set(kPitchGuide, 1.0f);
+        p.set(kVibratoDepth, 0.0f);
+        p.set(kVibratoRate, 5.0f);
+        p.set(kOnsetSnapMs, 8.0f);
     }
 
     /**
@@ -183,7 +186,7 @@ private:
 
     void consume(ParamStore &p) noexcept {
         float v;
-        for (int id = kBypass; id <= kPitchGuide; ++id) {
+        for (int id = kBypass; id <= kLastVocalParam; ++id) {
             if (!p.consume(id, v)) continue;
             switch (id) {
                 case kBypass:         bypass_ = v > 0.5f; break;
@@ -227,17 +230,23 @@ private:
                 case kVocoderCarrier: vocoder_.carrierTrack = v; break;
                 case kVocoderSibilance: vocoder_.sibilanceAmount = v; break;
                 case kPitchGuide:     voice_.useGuide = v > 0.5f; break;
+                case kVibratoDepth:   vibDepth_ = v; voice_.setVibrato(v, vibRate_); break;
+                case kVibratoRate:    vibRate_ = v; voice_.setVibrato(vibDepth_, v); break;
+                case kOnsetSnapMs:    voice_.setOnsetMs(v); break;
                 default: break;
             }
         }
         voiceActive_ = voice_.amount > 0.001f || voice_.harmonyMix > 0.001f ||
-                       voice_.formant != 1.0f || voice_.transpose != 0;
+                       voice_.formant != 1.0f || voice_.transpose != 0 ||
+                       vibDepth_ > 0.001f;
         psolaLatency_ = (int) (sr_ / 80.0f) + 2;
     }
 
     static int clampInt(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
     int sr_ = 48000;
+    // Kept here because the vibrato table is rebuilt from both values at once
+    float vibDepth_ = 0.0f, vibRate_ = 5.0f;
 
     NoiseGate gate_;
     VoiceEq eq_;
