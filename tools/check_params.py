@@ -75,6 +75,19 @@ def main():
         if len(names) > 1:
             problems.append(f"ids repetidos em Param.kt: {', '.join(names)} = {value}")
 
+    # Preset files are keyed on names, so a missing name silently drops a
+    # control from everything anyone saves or shares
+    named = set(re.findall(r'"(\w+)" to (\w+)', KT.read_text()))
+    named_consts = {const for _, const in named}
+    for name in kt:
+        if name not in named_consts:
+            problems.append(f"{name} nao esta em Param.byName, entao nao entra num preset")
+    for text, const in named:
+        if const not in kt:
+            problems.append(f"Param.byName aponta para {const}, que nao existe")
+        elif text != const.lower():
+            problems.append(f'Param.byName usa "{text}" para {const}; esperado "{const.lower()}"')
+
     count = re.search(r"kParamCount = (\d+)", CPP.read_text())
     if count:
         limit = int(count.group(1))
@@ -89,7 +102,7 @@ def main():
         return 1
 
     print(f"\033[32mok\033[0m   {len(cpp) - len(CPP_ONLY & set(cpp))} parametros "
-          f"em sincronia entre Params.h e Param.kt")
+          f"em sincronia entre Params.h e Param.kt, {len(named)} com nome para presets")
     return 0
 
 

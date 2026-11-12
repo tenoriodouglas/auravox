@@ -18,6 +18,7 @@ import com.auravox.audio.NativeAudio
 import com.auravox.audio.Param
 import com.auravox.audio.Preset
 import com.auravox.audio.Presets
+import com.auravox.audio.UserPresets
 import com.auravox.audio.ScaleType
 import com.auravox.audio.SongAnalyzer
 import com.auravox.audio.TrackDecoder
@@ -191,6 +192,9 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     // --- settings ---
     var countInBeats by mutableStateOf(4)
     var preset by mutableStateOf(Presets.default.label)
+
+    /** Presets the singer saved, alongside the built-in ones. */
+    var myPresets by mutableStateOf<List<Preset>>(emptyList()); private set
     var lastTake by mutableStateOf<Take?>(null); private set
 
     /** Mirror of the native parameter values, so sliders have something to read. */
@@ -207,6 +211,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         NativeAudio.create()
         syncParamsFromNative()
         applyPreset(Presets.default)
+        myPresets = UserPresets.load(app)
 
         songs = repo.loadSongs()
         takes = repo.loadTakes()
@@ -1046,6 +1051,64 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     private fun write(id: Int, value: Float) {
         params[id] = value
         NativeAudio.setParam(id, value)
+    }
+
+    /**
+     * Keeps the current sound under a name.
+     *
+     * Only the parameters that make the sound: the input gain and the track
+     * balance belong to the singer's room and travel with nobody.
+     */
+    fun savePreset(label: String) {
+        val values = UserPresets.captured.associateWith { get(it) }
+        if (!UserPresets.save(getApplication(), label, values)) {
+            message = "Não foi possível salvar esse nome."
+            return
+        }
+        myPresets = UserPresets.load(getApplication())
+        preset = label.trim()
+        message = "Preset \"${label.trim()}\" salvo."
+    }
+
+    fun deletePreset(p: Preset) {
+        UserPresets.delete(getApplication(), p.label)
+        myPresets = UserPresets.load(getApplication())
+        message = "Preset \"${p.label}\" removido."
+    }
+
+    /**
+     * Writes the preset somewhere shareable and returns the intent for it.
+     *
+     * The screen starts it, not this class: an Application context cannot open
+     * a chooser without pretending to be a new task, and a view model has no
+     * business knowing about tasks.
+     */
+    fun presetShareIntent(p: Preset): Intent? {
+        val file = runCatching { UserPresets.export(getApplication(), p) }.getOrNull()
+        if (file == null) {
+            message = "Não foi possível preparar o arquivo."
+            return null
+        }
+        return Exporter.shareIntent(
+            getApplication(), file.absolutePath, "Preset ${p.label}", "application/json"
+        )
+    }
+
+    /** Reads a preset someone sent and keeps it. */
+    fun importPreset(uri: Uri) {
+        val text = runCatching {
+            getApplication<Application>().contentResolver.openInputStream(uri)
+                ?.use { it.readBytes().toString(Charsets.UTF_8) }
+        }.getOrNull()
+        val parsed = text?.let { UserPresets.parse(it) }
+        if (parsed == null) {
+            message = "Esse arquivo não é um preset do AuraVox."
+            return
+        }
+        UserPresets.save(getApplication(), parsed.label, parsed.values)
+        myPresets = UserPresets.load(getApplication())
+        applyPreset(parsed)
+        message = "Preset \"${parsed.label}\" importado."
     }
 
     fun applyPreset(p: Preset) {

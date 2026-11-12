@@ -94,6 +94,9 @@ dependencies {
     // The palette's contrast is asserted on the JVM, so it runs in CI without
     // a device
     testImplementation("junit:junit:4.13.2")
+    // O org.json do android.jar e um esqueleto que lanca "not mocked", entao o
+    // formato dos presets so da para testar com a implementacao de verdade
+    testImplementation("org.json:json:20240303")
     testImplementation(platform("androidx.compose:compose-bom:2024.12.01"))
     testImplementation("androidx.compose.ui:ui-graphics")
 }

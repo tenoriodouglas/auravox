@@ -5,4 +5,6 @@
     <files-path name="library" path="library/" />
     <!-- The self-updater downloads the APK here before handing it to the installer. -->
     <cache-path name="updates" path="updates/" />
+    <!-- presets exportados para o seletor de compartilhamento -->
+    <cache-path name="share" path="share/" />
 </paths>

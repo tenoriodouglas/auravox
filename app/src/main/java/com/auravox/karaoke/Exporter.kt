@@ -22,9 +22,11 @@ object Exporter {
     fun contentUri(context: Context, path: String): Uri =
         FileProvider.getUriForFile(context, "${context.packageName}.files", File(path))
 
-    fun shareIntent(context: Context, path: String, title: String): Intent =
+    fun shareIntent(
+        context: Context, path: String, title: String, mimeType: String = "audio/wav"
+    ): Intent =
         Intent(Intent.ACTION_SEND).apply {
-            type = "audio/wav"
+            type = mimeType
             putExtra(Intent.EXTRA_STREAM, contentUri(context, path))
             putExtra(Intent.EXTRA_SUBJECT, title)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)

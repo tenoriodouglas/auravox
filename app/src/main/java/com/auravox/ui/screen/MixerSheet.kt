@@ -1,5 +1,25 @@
 package com.auravox.ui.screen
 
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FileOpen
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -90,10 +110,40 @@ fun MixerSheet(vm: KaraokeViewModel, onDismiss: () -> Unit) {
     }
 }
 
+/**
+ * The built-in presets, then the singer's own.
+ *
+ * Saving used to be impossible: dialling in a sound and touching another
+ * preset lost it, because the list was code. A saved preset is a small file,
+ * which also means it can be sent to somebody.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun VoiceTab(vm: KaraokeViewModel) {
-    Header("Preset")
+private fun PresetStrip(vm: KaraokeViewModel) {
+    val context = LocalContext.current
+    var naming by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
+
+    val pickPreset = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> if (uri != null) vm.importPreset(uri) }
+
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Header("Preset")
+        Row {
+            IconButton(onClick = { pickPreset.launch(arrayOf("application/json", "*/*")) }) {
+                Icon(Icons.Filled.FileOpen, "Importar preset", tint = Aura.Dim)
+            }
+            IconButton(onClick = { name = vm.preset; naming = true }) {
+                Icon(Icons.Filled.Save, "Salvar preset", tint = Aura.Teal)
+            }
+        }
+    }
+
     Row(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -110,6 +160,93 @@ private fun VoiceTab(vm: KaraokeViewModel) {
             )
         }
     }
+
+    if (vm.myPresets.isNotEmpty()) {
+        Spacer(Modifier.height(6.dp))
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            vm.myPresets.forEach { preset ->
+                var menu by remember(preset.label) { mutableStateOf(false) }
+                Box {
+                    FilterChip(
+                        selected = vm.preset == preset.label,
+                        onClick = { vm.applyPreset(preset) },
+                        label = { Text("${preset.emoji} ${preset.label}") },
+                        trailingIcon = {
+                            IconButton(
+                                onClick = { menu = true },
+                                modifier = Modifier.size(22.dp)
+                            ) {
+                                Icon(Icons.Filled.MoreVert, "Opções", tint = Aura.Dim)
+                            }
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Aura.Teal.copy(alpha = 0.28f),
+                            selectedLabelColor = Aura.Teal
+                        )
+                    )
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Compartilhar") },
+                            onClick = {
+                                menu = false
+                                vm.presetShareIntent(preset)?.let {
+                                    context.startActivity(
+                                        Intent.createChooser(it, "Compartilhar preset")
+                                    )
+                                }
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Remover") },
+                            onClick = { menu = false; vm.deletePreset(preset) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (naming) {
+        AlertDialog(
+            onDismissRequest = { naming = false },
+            title = { Text("Salvar este som") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it.take(40) },
+                        singleLine = true,
+                        label = { Text("Nome") }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Guarda os efeitos e a afinação. O volume do seu microfone e " +
+                            "o da base não entram: são do seu aparelho, não do som.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Aura.Dim
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { naming = false; vm.savePreset(name) },
+                    enabled = name.isNotBlank()
+                ) { Text("Salvar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { naming = false }) { Text("Cancelar") }
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun VoiceTab(vm: KaraokeViewModel) {
+    PresetStrip(vm)
 
     Header("Afinação")
     ParamSlider(vm, Param.PITCH_AMOUNT, "Autotune", 0f, 1f) { "${(it * 100).roundToInt()}%" }
