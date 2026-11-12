@@ -16,6 +16,19 @@ import java.util.concurrent.atomic.AtomicLong
 class TrackDecoder(private val context: Context) {
 
     private var thread: Thread? = null
+    private var guide: GuideMixer? = null
+
+    /**
+     * Level of the original voice played under the backing track, 0..1.
+     *
+     * Hearing the singer who recorded it, faintly, is how you learn a song you
+     * do not know yet, and it is nearly free once the vocal has been separated
+     * out. Mixed here rather than in the engine because it is one add per
+     * frame on a thread that is already copying the audio, and putting it in
+     * the realtime chain would mean a second ring buffer to keep in step.
+     */
+    @Volatile
+    var guideLevel: Float = 0f
     private val running = AtomicBoolean(false)
     private val seekRequest = AtomicLong(-1L)
 
@@ -26,8 +39,14 @@ class TrackDecoder(private val context: Context) {
     var error: String? = null
         private set
 
-    /** Opens the file and starts filling the ring. Returns false if it cannot be decoded. */
-    fun start(uri: Uri): Boolean {
+    /**
+     * Opens the file and starts filling the ring.
+     *
+     * [guideUri] is the isolated vocal of the same song, played underneath at
+     * [guideLevel]. It must be the same length and rate as the track, which it
+     * is: both come out of one separation pass.
+     */
+    fun start(uri: Uri, guideUri: Uri? = null): Boolean {
         stop()
         val probe = PcmSource.open(context, uri) ?: run {
             error = "unsupported"
@@ -39,6 +58,8 @@ class TrackDecoder(private val context: Context) {
 
         NativeAudio.trackSetSource(sampleRate, totalFrames)
         NativeAudio.trackSetEndOfStream(false)
+
+        guide = guideUri?.let { GuideMixer.open(context, it) }
 
         running.set(true)
         thread = Thread({ pump(probe) }, "auravox-decoder").apply {
@@ -59,6 +80,8 @@ class TrackDecoder(private val context: Context) {
         running.set(false)
         thread?.join(500)
         thread = null
+        guide?.release()
+        guide = null
     }
 
     private fun pump(source: PcmSource) {
@@ -66,7 +89,10 @@ class TrackDecoder(private val context: Context) {
         try {
             while (running.get()) {
                 val target = seekRequest.getAndSet(-1L)
-                if (target >= 0) source.seekTo(target)
+                if (target >= 0) {
+                    source.seekTo(target)
+                    guide?.seekTo(target)
+                }
 
                 // Back off while the ring is full; the audio thread drains it
                 if (NativeAudio.trackRingSpace() < MAX_FRAMES) {
@@ -81,6 +107,8 @@ class TrackDecoder(private val context: Context) {
                     while (f < frames) {
                         val chunk = minOf(MAX_FRAMES, frames - f)
                         interleaveStereo(data, (f * channels), chunk, channels, stereo)
+                        val level = guideLevel
+                        if (level > 0.001f) guide?.mixInto(stereo, chunk, level)
                         pushAll(stereo, chunk)
                         f += chunk
                     }
@@ -119,6 +147,65 @@ class TrackDecoder(private val context: Context) {
                 remaining = 0
             }
         }
+    }
+
+    /**
+     * Reads the vocal stem in step with the track and adds it in.
+     *
+     * The two sources hand out chunks of whatever size their decoders feel
+     * like, so what is read ahead is held and spent as the track asks for it.
+     * Running dry is silence rather than a stall: a guide vocal is a courtesy,
+     * and it must never be the reason the backing track stutters.
+     */
+    private class GuideMixer private constructor(private val source: PcmSource) {
+
+        private var pending = FloatArray(0)
+        private var held = 0
+        private var exhausted = false
+
+        companion object {
+            fun open(context: Context, uri: Uri): GuideMixer? =
+                PcmSource.open(context, uri)?.let { GuideMixer(it) }
+        }
+
+        fun mixInto(stereo: FloatArray, frames: Int, level: Float) {
+            fill(frames * 2)
+            val take = minOf(frames * 2, held)
+            for (i in 0 until take) stereo[i] += pending[i] * level
+            if (take < held) {
+                System.arraycopy(pending, take, pending, 0, held - take)
+            }
+            held -= take
+        }
+
+        private fun fill(samples: Int) {
+            while (held < samples && !exhausted) {
+                val more = source.read { data, count ->
+                    val channels = source.channels.coerceAtLeast(1)
+                    val frames = count / channels
+                    grow(held + frames * 2)
+                    interleaveStereo(data, 0, frames, channels, scratch)
+                    System.arraycopy(scratch, 0, pending, held, frames * 2)
+                    held += frames * 2
+                }
+                if (!more) exhausted = true
+            }
+        }
+
+        private var scratch = FloatArray(0)
+
+        private fun grow(needed: Int) {
+            if (pending.size < needed) pending = pending.copyOf(maxOf(needed, pending.size * 2, 8192))
+            if (scratch.size < needed) scratch = FloatArray(maxOf(needed, 8192))
+        }
+
+        fun seekTo(frame: Long) {
+            held = 0
+            exhausted = false
+            source.seekTo(frame)
+        }
+
+        fun release() = source.release()
     }
 
     companion object {

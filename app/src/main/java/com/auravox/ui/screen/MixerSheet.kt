@@ -114,6 +114,11 @@ private fun VoiceTab(vm: KaraokeViewModel) {
     Header("Afinação")
     ParamSlider(vm, Param.PITCH_AMOUNT, "Autotune", 0f, 1f) { "${(it * 100).roundToInt()}%" }
     ParamSlider(vm, Param.RETUNE_MS, "Velocidade", 1f, 200f) { "${it.roundToInt()} ms" }
+    Note(
+        "A velocidade vale na sustentação da nota. A entrada é corrigida mais " +
+            "rápido, porque é a parte que soa desafinada."
+    )
+    ParamSlider(vm, Param.ONSET_SNAP_MS, "Ataque", 1f, 60f) { "${it.roundToInt()} ms" }
     Row(
         Modifier.fillMaxWidth().padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -165,6 +170,17 @@ private fun VoiceTab(vm: KaraokeViewModel) {
     }
     ParamSlider(vm, Param.FORMANT, "Timbre", 0.7f, 1.4f) { "%.2f".format(it) }
 
+    Header("Vibrato")
+    Note(
+        "O vibrato de quem canta atravessa a correção sozinho: ela mira o centro " +
+            "da nota, não a altura instantânea. Isto aqui acrescenta vibrato a uma " +
+            "voz que não tem."
+    )
+    ParamSlider(vm, Param.VIBRATO_DEPTH, "Profundidade", 0f, 1f) {
+        if (it < 0.01f) "desligado" else "${(it * 100).roundToInt()} cents"
+    }
+    ParamSlider(vm, Param.VIBRATO_RATE, "Velocidade", 2f, 9f) { "%.1f Hz".format(it) }
+
     Header("Harmonia")
     ParamSlider(vm, Param.HARMONY_MIX, "Nível", 0f, 1f) { "${(it * 100).roundToInt()}%" }
     ParamSlider(vm, Param.HARMONY_VOICES, "Vozes", 1f, 3f, steps = 1) { it.roundToInt().toString() }
@@ -209,11 +225,35 @@ private fun PlaybackTab(vm: KaraokeViewModel) {
     }
     ParamSlider(vm, Param.TRACK_TEMPO, "Andamento", 0.5f, 1.5f) { "${(it * 100).roundToInt()}%" }
 
+    if (vm.guideVocalAvailable) {
+        Header("Vocal original como guia")
+        Note(
+            "O cantor original baixinho por baixo da base, para aprender a melodia. " +
+                "Suba até ouvir a referência e desça quando já souber."
+        )
+        PlainSlider(
+            label = "Guia",
+            value = vm.guideVocalLevel,
+            range = 0f..1f,
+            format = { "${(it * 100).roundToInt()}%" },
+            onChange = { vm.setGuideVocal(it) }
+        )
+    }
+
     Header("Tirar o vocal original")
-    Note(
-        "Cancela o que estiver no centro da mixagem, só na faixa da voz. " +
-            "Grave e pratos continuam inteiros."
-    )
+    if (vm.current?.separated == true) {
+        Note(
+            "Esta música já foi separada por modelo, então a base não tem mais vocal " +
+                "e este controle fica em zero. Ele existe para as músicas ainda não separadas."
+        )
+    } else {
+        Note(
+            "Cancela o que estiver no centro da mixagem, só na faixa da voz. " +
+                "Grave e pratos continuam inteiros. Para tirar de verdade, use " +
+                "\"Remover o vocal\" na biblioteca: um modelo separa a voz em vez " +
+                "de cancelar o meio da imagem estéreo."
+        )
+    }
     ParamSlider(vm, Param.TRACK_VOCAL_REMOVE, "Remoção", 0f, 1f) {
         "${(it * 100).roundToInt()}%"
     }
@@ -375,6 +415,39 @@ private fun Header(text: String) {
 @Composable
 private fun Note(text: String) {
     Text(text, style = MaterialTheme.typography.labelSmall, color = Aura.Dim)
+}
+
+/**
+ * A slider for something that is not a native parameter.
+ *
+ * The guide vocal is mixed on the decoder thread rather than in the engine, so
+ * it has no parameter id; this keeps it looking and behaving like every other
+ * control anyway.
+ */
+@Composable
+private fun PlainSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    format: (Float) -> String,
+    onChange: (Float) -> Unit
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(format(value), style = MaterialTheme.typography.labelSmall, color = Aura.Teal)
+        }
+        Slider(
+            value = value.coerceIn(range.start, range.endInclusive),
+            onValueChange = onChange,
+            valueRange = range,
+            colors = SliderDefaults.colors(
+                thumbColor = Aura.Teal,
+                activeTrackColor = Aura.Violet,
+                inactiveTrackColor = Aura.SurfaceHigh
+            )
+        )
+    }
 }
 
 @Composable

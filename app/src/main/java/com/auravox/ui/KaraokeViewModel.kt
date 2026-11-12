@@ -102,6 +102,15 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
      * and nothing on screen depends on which happened.
      */
     var palette by mutableStateOf(SongArt.fallback); private set
+
+    /**
+     * Level of the original voice played under the backing track.
+     *
+     * Only available once a song has been separated, because there is no
+     * isolated voice to play before that.
+     */
+    var guideVocalLevel by mutableStateOf(0f); private set
+    val guideVocalAvailable: Boolean get() = current?.vocalPath != null
     var analyzeProgress by mutableStateOf(0f); private set
 
     // --- engine ---
@@ -438,6 +447,11 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun setGuideVocal(level: Float) {
+        guideVocalLevel = level.coerceIn(0f, 1f)
+        decoder.guideLevel = guideVocalLevel
+    }
+
     private fun loadSource(uri: Uri, song: Song?, startSongMs: Double) {
         screen = Screen.STAGE
         sourceStartMs = startSongMs
@@ -445,7 +459,14 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         trail.clear()
         trailVersion = trail.version
 
-        if (!decoder.start(uri)) {
+        // Only against the song's own backing track: playing the original
+        // voice under a take the singer already recorded would be two voices
+        val guideUri = song?.vocalPath
+            ?.takeIf { stageMode == StageMode.SING }
+            ?.let { Uri.fromFile(File(it)) }
+        decoder.guideLevel = if (guideUri != null) guideVocalLevel else 0f
+
+        if (!decoder.start(uri, guideUri)) {
             message = "Formato não suportado."
             screen = Screen.LIBRARY
             return

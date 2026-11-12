@@ -48,6 +48,9 @@ object Param {
     const val VOCODER_CARRIER = 38
     const val VOCODER_SIBILANCE = 39
     const val PITCH_GUIDE = 40
+    const val VIBRATO_DEPTH = 41
+    const val VIBRATO_RATE = 42
+    const val ONSET_SNAP_MS = 43
 
     // backing track
     const val TRACK_GAIN = 48
