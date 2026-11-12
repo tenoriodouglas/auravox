@@ -23,6 +23,7 @@ import com.auravox.audio.ScaleType
 import com.auravox.audio.SongAnalyzer
 import com.auravox.audio.TrackDecoder
 import com.auravox.BuildConfig
+import com.auravox.karaoke.DeviceLibrary
 import com.auravox.karaoke.Exporter
 import com.auravox.karaoke.LyricsService
 import com.auravox.karaoke.Song
@@ -195,6 +196,12 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Presets the singer saved, alongside the built-in ones. */
     var myPresets by mutableStateOf<List<Preset>>(emptyList()); private set
+
+    /** The phone's own music, for importing by title instead of by folder. */
+    var browsing by mutableStateOf(false)
+    var deviceSongs by mutableStateOf<List<DeviceLibrary.Entry>>(emptyList()); private set
+    var deviceQuery by mutableStateOf("")
+    var deviceScanning by mutableStateOf(false); private set
     var lastTake by mutableStateOf<Take?>(null); private set
 
     /** Mirror of the native parameter values, so sliders have something to read. */
@@ -771,6 +778,47 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     fun dismissUpdate() { update = null }
 
     // --------------------------------------------------------------- library
+
+    /** Reads the phone's music index. Needs the audio permission first. */
+    fun scanDevice() {
+        if (deviceScanning) return
+        deviceScanning = true
+        viewModelScope.launch {
+            deviceSongs = DeviceLibrary.list(getApplication(), deviceQuery)
+            deviceScanning = false
+        }
+    }
+
+    fun searchDevice(query: String) {
+        deviceQuery = query
+        scanDevice()
+    }
+
+    /**
+     * Imports a song the phone already has.
+     *
+     * The title and artist come from the index rather than from the file name,
+     * which is also what the lyric lookup matches on, so a song imported this
+     * way finds its lyric far more often than one picked as a file called
+     * "04 - track.mp3".
+     */
+    fun importFromDevice(entry: DeviceLibrary.Entry) {
+        if (songs.any { it.uri == entry.uri.toString() }) {
+            message = "\"${entry.title}\" já está na biblioteca."
+            return
+        }
+        val song = Song(
+            id = UUID.randomUUID().toString(),
+            title = entry.title.ifBlank { "Sem título" },
+            artist = entry.artist.takeIf { it.isNotBlank() && it != "<unknown>" }.orEmpty(),
+            uri = entry.uri.toString(),
+            durationMs = entry.durationMs
+        )
+        songs = songs + song
+        repo.saveSongs(songs)
+        browsing = false
+        analyze(song)
+    }
 
     fun importSong(uri: Uri) {
         val app = getApplication<Application>()

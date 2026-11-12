@@ -11,6 +11,15 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- To list the music already on the phone, so importing a song is picking
+         a title rather than hunting through folders in the file picker. The
+         app only reads the index; the file itself is opened through the same
+         content URI the picker would have given. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
     <!-- Not required: the app still runs on devices without a fast audio path -->
     <uses-feature android:name="android.hardware.audio.low_latency" android:required="false" />
     <uses-feature android:name="android.hardware.audio.pro" android:required="false" />

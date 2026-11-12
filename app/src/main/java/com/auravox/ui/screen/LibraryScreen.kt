@@ -1,5 +1,14 @@
 package com.auravox.ui.screen
 
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
+import com.auravox.karaoke.DeviceLibrary
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -69,6 +78,23 @@ fun LibraryScreen(vm: KaraokeViewModel, onNeedMic: (() -> Unit) -> Unit) {
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let { vm.importSong(it) } }
 
+    // Reading the phone's music index needs a permission; without it the file
+    // picker still works, so a refusal falls back rather than dead-ends
+    val askMedia = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) { vm.browsing = true; vm.scanDevice() }
+        else pickAudio.launch(arrayOf("audio/*"))
+    }
+
+    val context = LocalContext.current
+    fun askAudio() {
+        val allowed = ContextCompat.checkSelfPermission(context, DeviceLibrary.permission) ==
+            PackageManager.PERMISSION_GRANTED
+        if (allowed) { vm.browsing = true; vm.scanDevice() }
+        else askMedia.launch(DeviceLibrary.permission)
+    }
+
     val pickLyrics = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -101,14 +127,21 @@ fun LibraryScreen(vm: KaraokeViewModel, onNeedMic: (() -> Unit) -> Unit) {
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
-                onClick = { pickAudio.launch(arrayOf("audio/*")) },
+                onClick = { askAudio() },
                 containerColor = Aura.Violet
             ) {
-                Icon(Icons.Filled.Add, contentDescription = null)
-                Text("  Importar música")
+                Icon(Icons.Filled.LibraryMusic, contentDescription = null)
+                Text("  Escolher música")
             }
         }
     ) { padding ->
+        if (vm.browsing) {
+            DeviceLibrarySheet(
+                vm = vm,
+                onPickFile = { vm.browsing = false; pickAudio.launch(arrayOf("audio/*")) }
+            )
+        }
+
         Column(Modifier.padding(padding).fillMaxSize()) {
             UpdateBanner(vm)
 
@@ -378,6 +411,118 @@ private fun SongRow(
                     leadingIcon = { Icon(Icons.Filled.Delete, null) },
                     onClick = { menu = false; onDelete() }
                 )
+            }
+        }
+    }
+}
+
+
+/**
+ * The phone's own music, to pick a song by its title.
+ *
+ * The file picker is still there, because a song that is not in the index —
+ * just downloaded, sitting in a messaging app's folder — has to come in
+ * somehow. But hunting folders should not be the first thing the app asks of
+ * someone who wants to sing.
+ *
+ * Importing from here also finds lyrics far more often, because the title and
+ * artist come from the index rather than from a file called "04 - track.mp3",
+ * and those are exactly what the lyric lookup matches on.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DeviceLibrarySheet(vm: KaraokeViewModel, onPickFile: () -> Unit) {
+    ModalBottomSheet(
+        onDismissRequest = { vm.browsing = false },
+        containerColor = Aura.Surface
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            Text(
+                "Músicas no aparelho",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(bottom = 10.dp)
+            )
+
+            OutlinedTextField(
+                value = vm.deviceQuery,
+                onValueChange = { vm.searchDevice(it) },
+                singleLine = true,
+                label = { Text("Buscar por título, artista ou álbum") },
+                leadingIcon = { Icon(Icons.Filled.Search, null) },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            if (vm.deviceScanning) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                    color = Aura.Teal
+                )
+            }
+
+            if (!vm.deviceScanning && vm.deviceSongs.isEmpty()) {
+                Text(
+                    if (vm.deviceQuery.isBlank())
+                        "Nenhuma música encontrada no aparelho."
+                    else "Nada com \"${vm.deviceQuery}\".",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Aura.Dim,
+                    modifier = Modifier.padding(vertical = 20.dp)
+                )
+            }
+
+            LazyColumn(
+                Modifier.weight(1f, fill = false),
+                contentPadding = PaddingValues(vertical = 8.dp)
+            ) {
+                items(vm.deviceSongs, key = { it.uri.toString() }) { entry ->
+                    val already = vm.songs.any { it.uri == entry.uri.toString() }
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !already) { vm.importFromDevice(entry) }
+                            .padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                entry.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (already) Aura.Dim else Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                buildString {
+                                    append(entry.subtitle)
+                                    if (entry.durationMs > 0) {
+                                        if (isNotEmpty()) append(" · ")
+                                        val s = entry.durationMs / 1000
+                                        append("%d:%02d".format(s / 60, s % 60))
+                                    }
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Aura.Dim,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        if (already) {
+                            Text(
+                                "já importada",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Aura.Teal
+                            )
+                        }
+                    }
+                }
+            }
+
+            TextButton(
+                onClick = onPickFile,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+            ) {
+                Icon(Icons.Filled.FolderOpen, null)
+                Text("  Procurar um arquivo em vez disso")
             }
         }
     }
