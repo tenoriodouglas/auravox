@@ -122,15 +122,17 @@ fun StageScreen(vm: KaraokeViewModel) {
             ScoreHeader(vm)
 
             Box(Modifier.weight(1f).fillMaxWidth()) {
+                // Lambdas, not values: the lane redraws on every detector frame
+                // and must not recompose with them
                 PitchLane(
                     notes = song.notes,
                     midiRange = range,
-                    heardMs = vm.heardMs,
                     trail = vm.trail,
-                    trailVersion = vm.trailVersion,
-                    liveMidi = if (listening) -1f else vm.pitchMidi,
-                    targetMidi = vm.targetMidi,
-                    accuracy = vm.liveAccuracy,
+                    heardMs = { vm.heardMs },
+                    liveMidi = { if (listening) -1f else vm.pitchMidi },
+                    targetMidi = { vm.targetMidi },
+                    accuracy = { vm.liveAccuracy },
+                    trailVersion = { vm.trailVersion },
                     modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)
                 )
 
@@ -160,8 +162,8 @@ fun StageScreen(vm: KaraokeViewModel) {
 
             LyricsView(
                 lines = song.lyrics,
-                positionMs = vm.heardMs.toLong(),
-                modifier = Modifier.padding(vertical = 10.dp)
+                positionMs = { vm.heardMs.toLong() },
+                modifier = Modifier.weight(0.85f)
             )
 
             Transport(vm, listening, scrubbing) { scrubbing = it }
