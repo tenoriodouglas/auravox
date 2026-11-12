@@ -16,7 +16,17 @@ import java.util.concurrent.atomic.AtomicLong
 class TrackDecoder(private val context: Context) {
 
     private var thread: Thread? = null
-    private var guide: GuideMixer? = null
+
+    /**
+     * Handed to the decoder thread and released by it, never by the caller.
+     *
+     * stop() joins with a timeout, so the caller cannot know the thread has
+     * finished — releasing a MediaCodec from here while that thread was still
+     * inside it would be a use-after-release, and assigning a new one would
+     * leave two threads on one mixer.
+     */
+    @Volatile
+    private var pendingGuide: GuideMixer? = null
 
     /**
      * Level of the original voice played under the backing track, 0..1.
@@ -59,10 +69,11 @@ class TrackDecoder(private val context: Context) {
         NativeAudio.trackSetSource(sampleRate, totalFrames)
         NativeAudio.trackSetEndOfStream(false)
 
-        guide = guideUri?.let { GuideMixer.open(context, it) }
+        val guide = guideUri?.let { GuideMixer.open(context, it) }
+        pendingGuide = guide
 
         running.set(true)
-        thread = Thread({ pump(probe) }, "auravox-decoder").apply {
+        thread = Thread({ pump(probe, guide) }, "auravox-decoder").apply {
             priority = Thread.NORM_PRIORITY + 1
             start()
         }
@@ -80,11 +91,11 @@ class TrackDecoder(private val context: Context) {
         running.set(false)
         thread?.join(500)
         thread = null
-        guide?.release()
-        guide = null
+        // Not released here: the thread owns it and frees it in its own finally
+        pendingGuide = null
     }
 
-    private fun pump(source: PcmSource) {
+    private fun pump(source: PcmSource, guide: GuideMixer?) {
         val stereo = FloatArray(MAX_FRAMES * 2)
         try {
             while (running.get()) {
@@ -130,6 +141,7 @@ class TrackDecoder(private val context: Context) {
             error = e.message
         } finally {
             source.release()
+            guide?.release()
         }
     }
 

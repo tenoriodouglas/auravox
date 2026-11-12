@@ -5,7 +5,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -19,24 +18,23 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.auravox.karaoke.LyricLine
@@ -124,8 +122,17 @@ fun LyricsView(
 /**
  * One line: a dim pass, then the sung part painted over it.
  *
- * The lit pass is clipped to the visual row the sweep has reached, so a lyric
- * that wraps lights up in reading order instead of all its rows at once.
+ * The dim pass is a real Text, so the row measures itself and wraps and
+ * centres the way text does. The first version drew everything by hand into a
+ * Spacer, which reports no height at all unless its height constraint is
+ * fixed — and a lazy list measures its items with an unbounded height, so
+ * every line collapsed to its padding and the whole lyric drew on top of
+ * itself.
+ *
+ * The lit pass is drawn over that content, clipped to the visual row the sweep
+ * has reached, so a lyric that wraps lights up in reading order instead of all
+ * its rows at once. It needs the layout Text already computed, which arrives
+ * through onTextLayout and is read in the draw phase.
  */
 @Composable
 private fun LyricLineRow(
@@ -134,56 +141,53 @@ private fun LyricLineRow(
     sweep: () -> Float,
     instant: Boolean
 ) {
-    val measurer = rememberTextMeasurer()
-    // Size and weight move together, so a line coming alive grows into focus
+    val layout = remember(text, isActive) { mutableStateOf<TextLayoutResult?>(null) }
+    val style = if (isActive) kActiveStyle else kIdleStyle
+
+    // Size and weight settle together, so a line coming alive grows into focus
     val lit by animateFloatAsState(
         targetValue = if (isActive) 1f else 0f,
         animationSpec = AuraMotion.defaultEffects(),
         label = "lyricLit"
     )
 
-    Spacer(
-        Modifier
+    Text(
+        text = text,
+        style = style,
+        color = Color.White.copy(alpha = 0.26f + 0.12f * lit),
+        onTextLayout = { layout.value = it },
+        modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
-            .drawWithCache {
-                val style = if (isActive) kActiveStyle else kIdleStyle
-                val measured = measurer.measure(
-                    AnnotatedString(text),
-                    style = style,
-                    constraints = Constraints(maxWidth = size.width.toInt().coerceAtLeast(1))
-                )
-                val width = size.width
+            .drawWithContent {
+                drawContent()
+                if (!isActive) return@drawWithContent
 
-                onDrawBehind {
-                    val base = Color.White.copy(alpha = 0.26f + 0.12f * lit)
-                    drawText(measured, color = base)
-                    if (!isActive) return@onDrawBehind
+                val measured = layout.value ?: return@drawWithContent
+                val p = sweep().coerceIn(0f, 1f)
+                if (p <= 0f) return@drawWithContent
 
-                    val p = sweep().coerceIn(0f, 1f)
-                    if (p <= 0f) return@onDrawBehind
+                val rows = measured.lineCount
+                if (rows <= 0) return@drawWithContent
+                val cursor = p * rows
+                val onRow = cursor.toInt().coerceAtMost(rows - 1)
+                val within = cursor - onRow
 
-                    val rows = measured.lineCount
-                    val cursor = p * rows
-                    val onRow = cursor.toInt().coerceAtMost(rows - 1)
-                    val within = cursor - onRow
+                for (row in 0..onRow) {
+                    val top = measured.getLineTop(row)
+                    val bottom = measured.getLineBottom(row)
+                    val left = measured.getLineLeft(row)
+                    val right = measured.getLineRight(row)
+                    val edge = if (row < onRow) right else left + (right - left) * within
 
-                    for (row in 0..onRow) {
-                        val top = measured.getLineTop(row)
-                        val bottom = measured.getLineBottom(row)
-                        val left = measured.getLineLeft(row)
-                        val right = measured.getLineRight(row)
-                        val edge = if (row < onRow) right else left + (right - left) * within
-
-                        if (instant) {
-                            // Reduced motion: a hard cut, no gradient
-                            clipRect(0f, top, edge, bottom) {
-                                drawText(measured, color = Aura.Teal)
-                            }
-                        } else {
-                            clipRect(0f, top, right, bottom) {
-                                drawText(measured, brush = sweepBrush(edge, width))
-                            }
+                    if (instant) {
+                        // Reduced motion: a hard cut, no gradient
+                        clipRect(0f, top, edge, bottom) {
+                            drawText(measured, color = Aura.Teal)
+                        }
+                    } else {
+                        clipRect(0f, top, right, bottom) {
+                            drawText(measured, brush = sweepBrush(edge, size.width))
                         }
                     }
                 }

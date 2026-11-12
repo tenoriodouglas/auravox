@@ -78,8 +78,11 @@ private const val AURORA_AGSL = """
     uniform float  uTime;
     uniform float  uLevel;
     uniform float  uGain;
-    uniform half4  uPrimary;
-    uniform half4  uSecondary;
+    // layout(color) is not decoration: setColorUniform refuses a uniform
+    // without it and throws, which crashed the stage on every device new
+    // enough to have shaders at all
+    layout(color) uniform half4 uPrimary;
+    layout(color) uniform half4 uSecondary;
 
     half4 main(float2 coord) {
         float2 uv = coord / uSize;

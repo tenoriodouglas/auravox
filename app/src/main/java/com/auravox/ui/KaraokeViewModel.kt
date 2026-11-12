@@ -71,6 +71,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     private val lyrics = LyricsService(BuildConfig.VERSION_NAME)
     private val separator = VocalSeparator(app)
     private var separateJob: kotlinx.coroutines.Job? = null
+    private var paletteJob: kotlinx.coroutines.Job? = null
     private val decoder = TrackDecoder(app)
 
     private val transport = FloatArray(NativeAudio.T.SIZE)
@@ -449,13 +450,17 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     /** Reads the cover off the file. Decoding an image is not main-thread work. */
     private fun loadPalette(song: Song) {
         palette = SongArt.fallback
-        viewModelScope.launch {
+        paletteJob?.cancel()
+        paletteJob = viewModelScope.launch {
             val found = withContext(Dispatchers.Default) {
                 val cover = SongArt.cover(getApplication(), Uri.parse(song.uri))
                     ?: return@withContext null
                 try { SongArt.paletteOf(cover) } finally { cover.recycle() }
             }
-            if (found != null) palette = found
+            // Decoding a large cover outlasts a quick change of mind, and
+            // painting the stage with the colours of the song the user just
+            // left is worse than leaving it on the fallback
+            if (found != null && current?.id == song.id) palette = found
         }
     }
 
@@ -823,12 +828,24 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
     // --------------------------------------------------------------- library
 
-    /** Reads the phone's music index. Needs the audio permission first. */
+    /**
+     * Reads the phone's music index. Needs the audio permission first.
+     *
+     * Loops until the query stops changing. Returning early while a scan was
+     * in flight dropped every keystroke typed during it and never caught up,
+     * so on a large library the list ended up answering a word nobody had
+     * finished typing.
+     */
     fun scanDevice() {
         if (deviceScanning) return
         deviceScanning = true
         viewModelScope.launch {
-            deviceSongs = DeviceLibrary.list(getApplication(), deviceQuery)
+            var served: String? = null
+            while (served != deviceQuery) {
+                val wanted = deviceQuery
+                deviceSongs = DeviceLibrary.list(getApplication(), wanted)
+                served = wanted
+            }
             deviceScanning = false
         }
     }
@@ -987,8 +1004,13 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
             when (outcome) {
                 is VocalSeparator.Result.Done -> {
                     val stems = outcome.stems
+                    // The song as it is now, not as it was half a minute ago
+                    // when the job started: the lyric lookup finishes in that
+                    // window, and copying from the old snapshot threw the
+                    // lyric it found away
+                    val latest = songs.firstOrNull { it.id == song.id } ?: song
                     updateSong(
-                        song.copyWith(
+                        latest.copyWith(
                             instrumentalPath = stems.instrumental.absolutePath,
                             vocalPath = stems.vocal?.absolutePath,
                             separatedAt = System.currentTimeMillis()

@@ -70,9 +70,13 @@ import kotlin.math.roundToInt
  * the voice; the pitch lane and the lyric, which are the only things carrying
  * information; and the transport floating over both.
  *
- * Nothing in the first or third plane may read a value that changes while
- * singing except inside a draw block — the lane and the lyric redraw sixty
- * times a second and must not drag the rest of the tree with them.
+ * The lane, the lyric and the light read everything that moves inside their
+ * draw blocks, so none of them recomposes while a song plays. The transport
+ * cannot do that — a slider's position and a clock's digits are composition,
+ * not drawing — so each thing in it that reads a moving value sits in its own
+ * small composable instead. Compose invalidates the function that read the
+ * state, so the buttons, the loop bar and the labels around them stay put
+ * while only the two or three readers refresh.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -327,6 +331,58 @@ private fun LoopBar(vm: KaraokeViewModel) {
     }
 }
 
+/**
+ * The position: a slider and two clocks.
+ *
+ * Its own composable because it is the only part of the transport that reads
+ * the playhead. Reading it where the buttons are would recompose them, the
+ * loop bar and every label beside them sixty times a second for a thumb that
+ * moved a pixel.
+ */
+@Composable
+private fun Scrubber(
+    vm: KaraokeViewModel,
+    scrubbing: Float?,
+    onScrub: (Float?) -> Unit
+) {
+    val total = vm.trackDurationMs.coerceAtLeast(1L)
+    val elapsed = (vm.heardMs - vm.sourceStartMs).coerceAtLeast(0.0)
+    val fraction = scrubbing ?: (elapsed / total).toFloat().coerceIn(0f, 1f)
+
+    Slider(
+        value = fraction,
+        onValueChange = { onScrub(it) },
+        onValueChangeFinished = {
+            scrubbing?.let { vm.seekTo((it * total + vm.sourceStartMs).toLong()) }
+            onScrub(null)
+        },
+        colors = SliderDefaults.colors(
+            thumbColor = Aura.Teal,
+            activeTrackColor = Aura.Teal,
+            inactiveTrackColor = Aura.SurfaceHigh
+        )
+    )
+
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(clock(elapsed.toLong()), style = MaterialTheme.typography.labelSmall, color = Aura.Dim)
+        Text(clock(total), style = MaterialTheme.typography.labelSmall, color = Aura.Dim)
+    }
+}
+
+/** The input level, on its own for the same reason as the scrubber. */
+@Composable
+private fun VoiceMeter(vm: KaraokeViewModel) {
+    LevelMeter(vm.voiceLevel, Modifier.fillMaxWidth())
+}
+
+/** Latency and dropout count, which change rarely but are read from the same poll. */
+@Composable
+private fun Health(vm: KaraokeViewModel) {
+    val glitches = vm.xruns + vm.underruns
+    StatChip("latência", "${vm.latencyMs.roundToInt()} ms")
+    StatChip("falhas", "$glitches", if (glitches > 0) Aura.Pink else Aura.Dim)
+}
+
 @Composable
 private fun Transport(
     vm: KaraokeViewModel,
@@ -338,28 +394,7 @@ private fun Transport(
         Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        val total = vm.trackDurationMs.coerceAtLeast(1L)
-        val elapsed = (vm.heardMs - vm.sourceStartMs).coerceAtLeast(0.0)
-        val fraction = scrubbing ?: (elapsed / total).toFloat().coerceIn(0f, 1f)
-
-        Slider(
-            value = fraction,
-            onValueChange = { onScrub(it) },
-            onValueChangeFinished = {
-                scrubbing?.let { vm.seekTo((it * total + vm.sourceStartMs).toLong()) }
-                onScrub(null)
-            },
-            colors = SliderDefaults.colors(
-                thumbColor = Aura.Teal,
-                activeTrackColor = Aura.Teal,
-                inactiveTrackColor = Aura.SurfaceHigh
-            )
-        )
-
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(clock(elapsed.toLong()), style = MaterialTheme.typography.labelSmall, color = Aura.Dim)
-            Text(clock(total), style = MaterialTheme.typography.labelSmall, color = Aura.Dim)
-        }
+        Scrubber(vm, scrubbing, onScrub)
 
         LoopBar(vm)
 
@@ -370,14 +405,9 @@ private fun Transport(
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Voz", style = MaterialTheme.typography.labelSmall, color = Aura.Dim)
-                LevelMeter(vm.voiceLevel, Modifier.fillMaxWidth())
+                VoiceMeter(vm)
             }
-            StatChip("latência", "${vm.latencyMs.roundToInt()} ms")
-            StatChip(
-                "falhas",
-                "${vm.xruns + vm.underruns}",
-                if (vm.xruns + vm.underruns > 0) Aura.Pink else Aura.Dim
-            )
+            Health(vm)
         }
 
         Row(
