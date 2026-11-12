@@ -15,6 +15,7 @@
 #include "dsp/Mixer.h"
 #include "dsp/PitchDetector.h"
 #include "dsp/Stft.h"
+#include "separation/Separator.h"
 #include "dsp/TimeScale.h"
 #include "dsp/VocalRemover.h"
 #include "dsp/Vocoder.h"
@@ -977,6 +978,136 @@ static void testAutotuneBehaviour() {
     }
 }
 
+// -------------------------------------------------------------- separacao
+
+/**
+ * The two properties the separator must have, independent of the neural net.
+ *
+ * The net is a black box here on purpose: these tests stand in for it with
+ * magnitudes made up on the spot, because what is being checked is not how
+ * well it separates but that nothing is lost or duplicated on the way through.
+ * Both numbers were first measured against the real model in a prototype, and
+ * both are the difference between an instrumental that sounds right and one
+ * that sounds broken.
+ */
+static void testSeparator() {
+    section("Separacao de vocal");
+
+    constexpr int kNFft = 4096;
+    constexpr int kHop = 1024;
+    constexpr int kModelBins = 1024;  // of the 2049 a 4096 window gives
+
+    Separator sep;
+    sep.prepare(kNFft, kHop, kModelBins);
+    check(sep.bins() == 2049, "a janela de 4096 da 2049 bins", fmtI("%d", sep.bins()));
+
+    // --- masks are a ratio and always add to one ---
+    {
+        std::vector<float> v((size_t) kModelBins), a((size_t) kModelBins);
+        for (int k = 0; k < kModelBins; ++k) {
+            // The two nets are trained apart and their magnitudes do not add
+            // up to the mixture, so the mask has to be a ratio
+            v[(size_t) k] = 0.4f * (float) (k % 7) + 0.1f;
+            a[(size_t) k] = 1.3f * (float) (k % 5) + 0.05f;
+        }
+        a[0] = 0.0f; v[0] = 0.0f;  // a silent bin, where the ratio is undefined
+
+        std::vector<float> mv((size_t) sep.bins()), ma((size_t) sep.bins());
+        sep.buildMasks(v.data(), a.data(), mv.data(), ma.data());
+
+        float worst = 0.0f;
+        for (int k = 0; k < sep.bins(); ++k) {
+            worst = std::max(worst, std::fabs(mv[(size_t) k] + ma[(size_t) k] - 1.0f));
+        }
+        check(worst < 1e-6f, "as mascaras somam 1 em todo bin", fmt("desvio %.2e", worst));
+        check(mv[0] == 0.0f && ma[0] == 1.0f,
+              "um bin silencioso vai inteiro para o acompanhamento", "");
+
+        // Above the net's ceiling the mask has to carry on, or the top end of
+        // the song is thrown away
+        float aboveSum = 0.0f;
+        for (int k = kModelBins; k < sep.bins(); ++k) aboveSum += mv[(size_t) k] + ma[(size_t) k];
+        check(aboveSum > (float) (sep.bins() - kModelBins) * 0.99f,
+              "a mascara continua acima do teto da rede",
+              fmt("soma %.0f", aboveSum));
+    }
+
+    // --- the two stems add back to the mixture ---
+    {
+        const int n = kHop * 24 + kNFft;
+        std::vector<float> mix((size_t) n);
+        for (int i = 0; i < n; ++i) {
+            const float t = (float) i / 44100.0f;
+            // A voice, a bass, and content above 11 kHz that the net does not
+            // model at all: the band that Spleeter's own default discards
+            mix[(size_t) i] =
+                0.30f * std::sin(2.0f * (float) M_PI * 220.0f * t) +
+                0.25f * std::sin(2.0f * (float) M_PI * 55.0f * t) +
+                0.20f * std::sin(2.0f * (float) M_PI * 14000.0f * t);
+        }
+
+        const int frames = sep.frameCount(n);
+        std::vector<float> modelMag((size_t) frames * (size_t) kModelBins);
+        sep.analyze(mix.data(), n, 0, modelMag.data());
+
+        // Stand in for the net: claim half of everything is voice. Whatever it
+        // claims, the two stems must still add back to the input
+        std::vector<float> vMag(modelMag.size()), aMag(modelMag.size());
+        for (size_t i = 0; i < modelMag.size(); ++i) {
+            vMag[i] = modelMag[i] * 0.7f;
+            aMag[i] = modelMag[i] * 0.5f;
+        }
+
+        std::vector<float> voice((size_t) n), backing((size_t) n);
+        sep.synthesize(vMag.data(), aMag.data(), 0, n, voice.data(), backing.data());
+
+        // Only where the windows fully overlap: four of them at this hop
+        const int lo = kNFft, hi = n - kNFft;
+        float worst = 0.0f, peak = 0.0f;
+        for (int i = lo; i < hi; ++i) {
+            worst = std::max(worst,
+                std::fabs(voice[(size_t) i] + backing[(size_t) i] - mix[(size_t) i]));
+            peak = std::max(peak, std::fabs(mix[(size_t) i]));
+        }
+        check(worst < 1e-4f, "voz mais acompanhamento devolvem a mistura",
+              fmt2("erro %.2e em pico %.2f", worst, peak));
+
+        // The band the net never sees must survive. Dropping it is what makes
+        // an instrumental sound muffled, and it measured 39 dB down in the
+        // prototype when the mask was left at zero up there
+        const float inHigh = magnitudeAt(mix.data() + lo, hi - lo, 14000.0f, 44100);
+        const float outHigh =
+            magnitudeAt(voice.data() + lo, hi - lo, 14000.0f, 44100) +
+            magnitudeAt(backing.data() + lo, hi - lo, 14000.0f, 44100);
+        check(outHigh > inHigh * 0.9f, "a banda acima do teto da rede sobrevive",
+              fmt2("%.4f de %.4f", outHigh, inHigh));
+    }
+
+    // --- one stem at a time, for when only the backing track is wanted ---
+    {
+        const int n = kHop * 16 + kNFft;
+        std::vector<float> mix((size_t) n);
+        for (int i = 0; i < n; ++i) {
+            mix[(size_t) i] = 0.3f * std::sin(
+                2.0f * (float) M_PI * 300.0f * (float) i / 44100.0f);
+        }
+        const int frames = sep.frameCount(n);
+        std::vector<float> modelMag((size_t) frames * (size_t) kModelBins);
+        sep.analyze(mix.data(), n, 1, modelMag.data());
+
+        std::vector<float> vMag(modelMag.size(), 0.0f);
+        std::vector<float> aMag(modelMag);  // the net says it is all backing
+
+        std::vector<float> backing((size_t) n);
+        sep.synthesize(vMag.data(), aMag.data(), 1, n, nullptr, backing.data());
+
+        const int lo = kNFft, hi = n - kNFft;
+        const float got = magnitudeAt(backing.data() + lo, hi - lo, 300.0f, 44100);
+        check(got > 0.27f && got < 0.33f,
+              "pedir so o acompanhamento devolve a mistura inteira", fmt("%.3f", got));
+    }
+}
+
 // -------------------------------------------------------------------- stft
 
 /**
@@ -1078,6 +1209,7 @@ int main() {
     testTimeScaleRateMath();
     testAutotuneBehaviour();
     testStft();
+    testSeparator();
     testVocalRemover();
     testVocoder();
     testMonitorToggle();
