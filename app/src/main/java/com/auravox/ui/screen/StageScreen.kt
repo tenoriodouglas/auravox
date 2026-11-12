@@ -1,12 +1,15 @@
 package com.auravox.ui.screen
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -41,13 +44,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.auravox.audio.Param
 import com.auravox.ui.Aura
+import com.auravox.ui.AuraMotion
 import com.auravox.ui.KaraokeViewModel
+import com.auravox.ui.widget.Aurora
 import com.auravox.ui.widget.ComboBadge
 import com.auravox.ui.widget.LevelMeter
 import com.auravox.ui.widget.LyricsView
@@ -56,6 +62,18 @@ import com.auravox.ui.widget.StatChip
 import com.auravox.ui.widget.Tuner
 import kotlin.math.roundToInt
 
+/**
+ * The screen the app exists for.
+ *
+ * Three planes, each moving at its own rate, which is where the sense of depth
+ * comes from: the light behind, lit by the song's own cover and breathing with
+ * the voice; the pitch lane and the lyric, which are the only things carrying
+ * information; and the transport floating over both.
+ *
+ * Nothing in the first or third plane may read a value that changes while
+ * singing except inside a draw block — the lane and the lyric redraw sixty
+ * times a second and must not drag the rest of the tree with them.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StageScreen(vm: KaraokeViewModel) {
@@ -64,110 +82,179 @@ fun StageScreen(vm: KaraokeViewModel) {
     var scrubbing by remember { mutableStateOf<Float?>(null) }
     val listening = vm.stageMode == KaraokeViewModel.StageMode.PLAYBACK
 
-    Scaffold(
-        containerColor = Aura.Background,
-        topBar = {
-            TopAppBar(
-                navigationIcon = {
-                    IconButton(onClick = { vm.leaveStage() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
-                    }
-                },
-                title = {
-                    Column {
-                        Text(
-                            song.title,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            buildString {
-                                append(
-                                    when (vm.stageMode) {
-                                        KaraokeViewModel.StageMode.OVERDUB ->
-                                            "camada ${(vm.activeTake?.layerCount ?: 0) + 1} · "
-                                        KaraokeViewModel.StageMode.PLAYBACK -> "ouvindo · "
-                                        else -> ""
-                                    }
-                                )
-                                append(song.keyLabel)
-                                val shift = vm.get(Param.TRACK_KEY_SHIFT).roundToInt()
-                                if (shift != 0) append("  ${if (shift > 0) "+" else ""}$shift")
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (vm.stageMode == KaraokeViewModel.StageMode.SING)
-                                Aura.Dim else Aura.Teal
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { vm.toggleMonitor() }) {
-                        Icon(
-                            if (vm.monitorOn) Icons.Filled.Headphones else Icons.Filled.HeadsetOff,
-                            contentDescription = "Monitor",
-                            tint = if (vm.monitorOn) Aura.Teal else Aura.Dim
-                        )
-                    }
-                    IconButton(onClick = { vm.showMixer = true }) {
-                        Icon(Icons.Filled.Tune, contentDescription = "Mixer", tint = Aura.Teal)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Aura.Background)
-            )
-        }
-    ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
+    // Colour crossfades when a new song's cover is read, so the stage settles
+    // into the song rather than snapping to it
+    val primary by animateColorAsState(
+        Color(vm.palette.primary), AuraMotion.slowSpatial(), label = "auraPrimary"
+    )
+    val secondary by animateColorAsState(
+        Color(vm.palette.secondary), AuraMotion.slowSpatial(), label = "auraSecondary"
+    )
 
-            ScoreHeader(vm)
+    Box(Modifier.fillMaxSize().background(Aura.Background)) {
 
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                // Lambdas, not values: the lane redraws on every detector frame
-                // and must not recompose with them
-                PitchLane(
-                    notes = song.notes,
-                    midiRange = range,
-                    trail = vm.trail,
-                    heardMs = { vm.heardMs },
-                    liveMidi = { if (listening) -1f else vm.pitchMidi },
-                    targetMidi = { vm.targetMidi },
-                    accuracy = { vm.liveAccuracy },
-                    trailVersion = { vm.trailVersion },
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)
+        // --- plane 0: the light ---
+        Aurora(
+            level = { vm.voiceLevel },
+            primary = primary,
+            secondary = secondary,
+            intensity = if (listening) 0.45f else 1f,
+            modifier = Modifier.fillMaxSize()
+        )
+
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = { vm.leaveStage() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+                        }
+                    },
+                    title = {
+                        Column {
+                            Text(
+                                song.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                buildString {
+                                    append(
+                                        when (vm.stageMode) {
+                                            KaraokeViewModel.StageMode.OVERDUB ->
+                                                "camada ${(vm.activeTake?.layerCount ?: 0) + 1} · "
+                                            KaraokeViewModel.StageMode.PLAYBACK -> "ouvindo · "
+                                            else -> ""
+                                        }
+                                    )
+                                    append(song.keyLabel)
+                                    val shift = vm.get(Param.TRACK_KEY_SHIFT).roundToInt()
+                                    if (shift != 0) append("  ${if (shift > 0) "+" else ""}$shift")
+                                    if (song.separated) append(" · base separada")
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (vm.stageMode == KaraokeViewModel.StageMode.SING)
+                                    Aura.Dim else Aura.Teal
+                            )
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { vm.toggleMonitor() }) {
+                            Icon(
+                                if (vm.monitorOn) Icons.Filled.Headphones else Icons.Filled.HeadsetOff,
+                                contentDescription = "Monitor",
+                                tint = if (vm.monitorOn) Aura.Teal else Aura.Dim
+                            )
+                        }
+                        IconButton(onClick = { vm.showMixer = true }) {
+                            Icon(Icons.Filled.Tune, contentDescription = "Mixer", tint = Aura.Teal)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent
+                    )
+                )
+            }
+        ) { padding ->
+
+            // --- plane 1: what carries information ---
+            Column(Modifier.padding(padding).fillMaxSize()) {
+
+                ScoreHeader(vm)
+
+                Box(Modifier.weight(1.15f).fillMaxWidth()) {
+                    PitchLane(
+                        notes = song.notes,
+                        midiRange = range,
+                        trail = vm.trail,
+                        heardMs = { vm.heardMs },
+                        liveMidi = { if (listening) -1f else vm.pitchMidi },
+                        targetMidi = { vm.targetMidi },
+                        accuracy = { vm.liveAccuracy },
+                        trailVersion = { vm.trailVersion },
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)
+                    )
+
+                    if (!song.hasMelody) {
+                        Text(
+                            "Sem guia de melodia. Analise a música para pontuar.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Aura.Dim,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    }
+
+                    if (vm.countInBeatsLeft > 0) {
+                        Box(
+                            Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "${vm.countInBeatsLeft}",
+                                fontSize = 86.sp,
+                                color = Aura.Teal,
+                                style = MaterialTheme.typography.displayLarge
+                            )
+                        }
+                    }
+                }
+
+                LyricsView(
+                    lines = song.lyrics,
+                    positionMs = { vm.heardMs.toLong() },
+                    modifier = Modifier.weight(1f)
                 )
 
-                if (!song.hasMelody) {
-                    Text(
-                        "Sem guia de melodia. Analise a música para pontuar.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Aura.Dim,
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-                }
-
-                if (vm.countInBeatsLeft > 0) {
-                    Box(
-                        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "${vm.countInBeatsLeft}",
-                            fontSize = 72.sp,
-                            color = Aura.Teal,
-                            style = MaterialTheme.typography.displayLarge
-                        )
-                    }
+                // --- plane 2: the transport, over the other two ---
+                GlassPanel {
+                    Transport(vm, listening, scrubbing) { scrubbing = it }
                 }
             }
-
-            LyricsView(
-                lines = song.lyrics,
-                positionMs = { vm.heardMs.toLong() },
-                modifier = Modifier.weight(0.85f)
-            )
-
-            Transport(vm, listening, scrubbing) { scrubbing = it }
         }
+    }
+}
+
+/**
+ * A panel that reads as glass without blurring anything.
+ *
+ * Modifier.blur does nothing at all below API 31 and is expensive where it
+ * works, so this is the fallback the research called for, built as the only
+ * version: a translucent fill, a lit hairline along the top edge, and a
+ * gradient that makes the surface look like it has thickness. On a near-black
+ * background it is indistinguishable from the real thing, and it costs two
+ * fills on every device.
+ */
+@Composable
+private fun GlassPanel(content: @Composable () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
+            .background(
+                Brush.verticalGradient(
+                    0f to Aura.SurfaceHigh.copy(alpha = 0.92f),
+                    0.35f to Aura.Surface.copy(alpha = 0.96f),
+                    1f to Aura.Surface
+                )
+            )
+    ) {
+        // The lit edge is what sells it: a surface with no highlight reads as
+        // a hole rather than as a pane sitting on top
+        Spacer(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(
+                    Brush.horizontalGradient(
+                        0f to Color.Transparent,
+                        0.5f to Color.White.copy(alpha = 0.22f),
+                        1f to Color.Transparent
+                    )
+                )
+        )
+        Box(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) { content() }
     }
 }
 
@@ -181,7 +268,7 @@ private fun ScoreHeader(vm: KaraokeViewModel) {
         Row(verticalAlignment = Alignment.Bottom) {
             Text(
                 "${(vm.score * 100).roundToInt()}",
-                fontSize = 34.sp,
+                fontSize = 38.sp,
                 color = Color.White,
                 style = MaterialTheme.typography.displayLarge
             )
@@ -189,7 +276,7 @@ private fun ScoreHeader(vm: KaraokeViewModel) {
                 " pts",
                 style = MaterialTheme.typography.labelSmall,
                 color = Aura.Dim,
-                modifier = Modifier.padding(bottom = 6.dp)
+                modifier = Modifier.padding(bottom = 7.dp)
             )
         }
         ComboBadge(vm.combo)
@@ -248,11 +335,7 @@ private fun Transport(
     onScrub: (Float?) -> Unit
 ) {
     Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
-            .background(Aura.Surface)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         val total = vm.trackDurationMs.coerceAtLeast(1L)
@@ -307,15 +390,20 @@ private fun Transport(
             }
 
             Box(
-                Modifier.size(64.dp).clip(CircleShape).background(Aura.Violet),
+                Modifier.size(68.dp).clip(CircleShape).background(
+                    Brush.verticalGradient(
+                        0f to Aura.Violet,
+                        1f to Aura.Violet.copy(alpha = 0.78f)
+                    )
+                ),
                 contentAlignment = Alignment.Center
             ) {
-                IconButton(onClick = { vm.togglePlay() }, modifier = Modifier.size(64.dp)) {
+                IconButton(onClick = { vm.togglePlay() }, modifier = Modifier.size(68.dp)) {
                     Icon(
                         if (vm.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                         contentDescription = if (vm.playing) "Pausar" else "Tocar",
                         tint = Color.White,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(34.dp)
                     )
                 }
             }
@@ -323,16 +411,16 @@ private fun Transport(
             if (listening) {
                 // Nothing to record while listening back; the slot stays so the
                 // play button does not jump sideways between modes
-                Box(Modifier.size(52.dp))
+                Box(Modifier.size(54.dp))
             } else {
                 Box(
                     Modifier
-                        .size(52.dp)
+                        .size(54.dp)
                         .clip(CircleShape)
                         .background(if (vm.recording) Aura.Pink else Aura.SurfaceHigh),
                     contentAlignment = Alignment.Center
                 ) {
-                    IconButton(onClick = { vm.toggleRecording() }, modifier = Modifier.size(52.dp)) {
+                    IconButton(onClick = { vm.toggleRecording() }, modifier = Modifier.size(54.dp)) {
                         Icon(
                             if (vm.recording) Icons.Filled.Stop else Icons.Filled.FiberManualRecord,
                             contentDescription = "Gravar",

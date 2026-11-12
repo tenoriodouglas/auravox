@@ -25,6 +25,7 @@ import com.auravox.BuildConfig
 import com.auravox.karaoke.Exporter
 import com.auravox.karaoke.LyricsService
 import com.auravox.karaoke.Song
+import com.auravox.karaoke.SongArt
 import com.auravox.karaoke.SongRepository
 import com.auravox.separation.ModelStore
 import com.auravox.separation.VocalSeparator
@@ -94,6 +95,13 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     var separating by mutableStateOf<String?>(null); private set
     var separatePhase by mutableStateOf(VocalSeparator.Phase.MODEL); private set
     var separateProgress by mutableStateOf(0f); private set
+
+    /**
+     * Two colours taken from the song's own cover, for the light behind the
+     * stage. Falls back to the app's palette when a file carries no picture,
+     * and nothing on screen depends on which happened.
+     */
+    var palette by mutableStateOf(SongArt.fallback); private set
     var analyzeProgress by mutableStateOf(0f); private set
 
     // --- engine ---
@@ -373,6 +381,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         activeTake = null
         stageMode = StageMode.SING
         set(Param.MONITOR_VOICE, 1f)
+        loadPalette(song)
         loadSource(Uri.parse(song.playbackUri), song, 0.0)
     }
 
@@ -414,6 +423,19 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         set(Param.MONITOR_VOICE, 0f)
         loadSource(Uri.fromFile(File(take.path)), song, take.startSongMs)
         startPlayback()
+    }
+
+    /** Reads the cover off the file. Decoding an image is not main-thread work. */
+    private fun loadPalette(song: Song) {
+        palette = SongArt.fallback
+        viewModelScope.launch {
+            val found = withContext(Dispatchers.Default) {
+                val cover = SongArt.cover(getApplication(), Uri.parse(song.uri))
+                    ?: return@withContext null
+                try { SongArt.paletteOf(cover) } finally { cover.recycle() }
+            }
+            if (found != null) palette = found
+        }
     }
 
     private fun loadSource(uri: Uri, song: Song?, startSongMs: Double) {
