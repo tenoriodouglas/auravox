@@ -72,6 +72,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     private val separator = VocalSeparator(app)
     private var separateJob: kotlinx.coroutines.Job? = null
     private var paletteJob: kotlinx.coroutines.Job? = null
+    private val lyricQueue = ArrayDeque<Pair<Song, Boolean>>()
     private val decoder = TrackDecoder(app)
 
     private val transport = FloatArray(NativeAudio.T.SIZE)
@@ -1087,17 +1088,36 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
      * manual import stays for the songs no database has.
      */
     fun fetchLyrics(song: Song, announce: Boolean = true) {
+        // Queued, not dropped. One lookup at a time keeps the app well inside
+        // the service's rate limit, but returning early while one was in
+        // flight threw the request away: importing two songs in a row left the
+        // second one with no lyric, no message and nothing to retry it.
+        if (lyricQueue.none { it.first.id == song.id }) {
+            lyricQueue.add(song to announce)
+        }
         if (fetchingLyrics != null) return
+        drainLyricQueue()
+    }
+
+    private fun drainLyricQueue() {
+        val next = lyricQueue.removeFirstOrNull() ?: return
+        val (song, announce) = next
         fetchingLyrics = song.id
 
         viewModelScope.launch {
-            val outcome = lyrics.resolve(
-                title = song.title,
-                artist = song.artist,
-                album = null,
-                durationMs = song.durationMs
-            )
-            fetchingLyrics = null
+            val outcome = try {
+                lyrics.resolve(
+                    title = song.title,
+                    artist = song.artist,
+                    album = null,
+                    durationMs = song.durationMs
+                )
+            } finally {
+                // In a finally: a cancelled scope never reaches a plain
+                // statement after the suspending call, and leaving this set
+                // refused every later lookup for the life of the screen
+                fetchingLyrics = null
+            }
 
             when (outcome) {
                 is LyricsService.Outcome.Found -> {
@@ -1115,6 +1135,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
                 is LyricsService.Outcome.Failed ->
                     if (announce) message = "Busca de letra falhou: ${outcome.reason}"
             }
+            drainLyricQueue()
         }
     }
 

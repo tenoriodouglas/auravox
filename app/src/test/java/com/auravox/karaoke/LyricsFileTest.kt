@@ -152,6 +152,70 @@ class LyricsFileTest {
         assertTrue("o ultimo tempo foi ${previous}", previous in 60_000L..400_000L)
     }
 
+    /**
+     * Out of order in the file, in order out of the parser.
+     *
+     * The view finds the current line by walking forward and stopping at the
+     * first time that has not arrived, which is right for an ordered list and
+     * wrong for any other. One line out of order in a community database froze
+     * the highlight there for the rest of the song.
+     */
+    @Test
+    fun sortsLinesByTime() {
+        val shuffled = """
+            version: '1.0'
+            lines:
+            - text: terceira
+              start_ms: 3000
+              words:
+              - text: terceira
+                start_ms: 3000
+            - text: primeira
+              start_ms: 1000
+              words:
+              - text: primeira
+                start_ms: 1000
+            - text: segunda
+              start_ms: 2000
+              words:
+              - text: segunda
+                start_ms: 2000
+        """.trimIndent()
+        val lines = requireNotNull(LyricsFile.parse(shuffled))
+        assertEquals(listOf("primeira", "segunda", "terceira"), lines.map { it.text })
+        assertEquals(listOf(1000L, 2000L, 3000L), lines.map { it.timeMs })
+    }
+
+    /**
+     * A line with no time at all makes the whole document unusable.
+     *
+     * Dropping it quietly handed back a lyric with a hole in it, still
+     * presented as word-synced, and the highlight skipped a line. The record
+     * always carries a whole LRC as well, so declining is the better answer.
+     */
+    @Test
+    fun declinesWhenALineHasNoTime() {
+        val holed = """
+            version: '1.0'
+            lines:
+            - text: com tempo
+              start_ms: 1000
+              words:
+              - text: com
+                start_ms: 1000
+            - text: sem tempo nenhum
+              words:
+              - text: sem
+                start_ms: 2000
+            - text: com tempo de novo
+              start_ms: 3000
+              words:
+              - text: com
+                start_ms: 3000
+        """.trimIndent()
+        assertNull(LyricsFile.parse(holed))
+    }
+
     /** A block scalar is a different reader, so it declines instead of guessing. */
     @Test
     fun declinesBlockScalar() {

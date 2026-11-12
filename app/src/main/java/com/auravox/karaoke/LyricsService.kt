@@ -81,6 +81,13 @@ class LyricsService(private val appVersion: String) {
 
     // --- the two queries ---
 
+    /** What one request came back with: a body, nothing, or no answer at all. */
+    private sealed interface Answer {
+        data class Body(val text: String) : Answer
+        data object Missing : Answer      // the service answered, it has nothing
+        data class Offline(val reason: String) : Answer
+    }
+
     private suspend fun exact(
         title: String, artist: String, album: String?, seconds: Double
     ): Outcome? {
@@ -90,9 +97,12 @@ class LyricsService(private val appVersion: String) {
             if (!album.isNullOrBlank()) append("&album_name=").append(enc(album))
             if (seconds >= 1.0) append("&duration=").append(seconds.toInt())
         }
-        val body = get("$kBase/api/get?$params") ?: return null
-        val record = runCatching { JSONObject(body) }.getOrNull() ?: return null
-        return record.toOutcome()
+        return when (val answer = get("$kBase/api/get?$params")) {
+            is Answer.Offline -> Outcome.Failed(answer.reason)
+            Answer.Missing -> null
+            is Answer.Body -> runCatching { JSONObject(answer.text) }
+                .getOrNull()?.toOutcome()
+        }
     }
 
     private suspend fun search(title: String, artist: String, seconds: Double): Outcome {
@@ -100,7 +110,14 @@ class LyricsService(private val appVersion: String) {
             append("track_name=").append(enc(title))
             if (artist.isNotBlank()) append("&artist_name=").append(enc(artist))
         }
-        val body = get("$kBase/api/search?$params") ?: return Outcome.NotFound
+        val body = when (val answer = get("$kBase/api/search?$params")) {
+            // Being offline is not the same answer as the database not having
+            // the song. Reporting both as "no lyric found" sent people hunting
+            // for a .lrc file for a song whose lyric was there all along.
+            is Answer.Offline -> return Outcome.Failed(answer.reason)
+            Answer.Missing -> return Outcome.NotFound
+            is Answer.Body -> answer.text
+        }
         val array = runCatching { JSONArray(body) }.getOrNull() ?: return Outcome.NotFound
         if (array.length() == 0) return Outcome.NotFound
 
@@ -176,7 +193,7 @@ class LyricsService(private val appVersion: String) {
      * edge-level rate limit comes back as plain text, which would otherwise
      * throw somewhere far from here.
      */
-    private suspend fun get(url: String, attempt: Int = 0): String? {
+    private suspend fun get(url: String, attempt: Int = 0): Answer {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             setRequestProperty("User-Agent", userAgent)
@@ -188,20 +205,33 @@ class LyricsService(private val appVersion: String) {
             val code = connection.responseCode
 
             if (code == 429 && attempt < kMaxRetries) {
-                val after = connection.getHeaderField("Retry-After")?.toLongOrNull() ?: 5L
-                val jitter = (after * 300L * (1 + attempt)).coerceAtMost(4_000L)
-                delay(after * 1000L + jitter)
-                connection.disconnect()
+                // Clamped, and the socket is let go before the wait. The
+                // header is whatever the service put there, and an ordinary
+                // rate limiter says 3600: honouring that literally suspended
+                // the lookup for an hour with the connection still open, and
+                // the caller's "searching" flag stayed up for as long.
+                val asked = connection.getHeaderField("Retry-After")?.toLongOrNull() ?: 5L
+                val wait = (asked.coerceIn(1L, kMaxWaitSeconds) * 1000L) +
+                           (300L * (1 + attempt))
+                runCatching { connection.disconnect() }
+                delay(wait)
                 return get(url, attempt + 1)
             }
-            if (code != HttpURLConnection.HTTP_OK) return null
+            if (code == 404) return Answer.Missing
+            if (code != HttpURLConnection.HTTP_OK) {
+                return Answer.Offline("o servidor respondeu $code")
+            }
 
             val type = connection.contentType ?: ""
-            if (!type.contains("json", ignoreCase = true)) return null
+            if (!type.contains("json", ignoreCase = true)) {
+                return Answer.Offline("resposta inesperada do servidor")
+            }
 
-            return connection.inputStream.bufferedReader().use { it.readText() }
+            return Answer.Body(connection.inputStream.bufferedReader().use { it.readText() })
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            return null
+            return Answer.Offline("sem conexão")
         } finally {
             runCatching { connection.disconnect() }
         }
@@ -212,6 +242,8 @@ class LyricsService(private val appVersion: String) {
     private companion object {
         const val kBase = "https://lrclib.net"
         const val kMaxRetries = 2
+        /** However long the service asks for, this is as long as it waits. */
+        const val kMaxWaitSeconds = 20L
         /** Below this the best candidate is not credibly the same song. */
         const val kMinScore = 3.0f
     }

@@ -44,6 +44,7 @@ object LyricsFile {
         var line: LineDraft? = null
         var word: WordDraft? = null
         var inLines = false
+        var incomplete = false
 
         fun flushWord() {
             val w = word ?: return
@@ -58,6 +59,12 @@ object LyricsFile {
             val t = l.text
             if (t != null && l.startMs >= 0L) {
                 out.add(LyricLine(timeMs = l.startMs, text = t.trim(), words = l.words.toList()))
+            } else {
+                // A line that arrived without a time cannot be placed. Dropping
+                // it quietly would hand back a lyric with a hole in it, still
+                // presented as word-synced, and the singer would see the
+                // highlight skip a line. The LRC in the same record is whole.
+                incomplete = true
             }
             line = null
         }
@@ -107,8 +114,20 @@ object LyricsFile {
         }
         flushLine()
 
-        // Without word timings this format has nothing the LRC does not
-        return out.takeIf { it.isNotEmpty() && it.any { l -> l.words.isNotEmpty() } }
+        if (incomplete) return null
+        if (out.isEmpty() || out.none { it.words.isNotEmpty() }) return null
+
+        /*
+         * Sorted by time, not left in file order.
+         *
+         * The view finds the current line by walking forward and stopping at
+         * the first line whose time has not arrived yet, which is right for an
+         * ordered list and wrong for any other kind. One line out of order —
+         * and a community database will have some — froze the highlight there
+         * for the rest of the song. Sorting is cheap and makes the view's
+         * assumption true rather than hopeful.
+         */
+        return out.sortedBy { it.timeMs }
     }
 
     /**
