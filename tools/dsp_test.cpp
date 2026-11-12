@@ -775,8 +775,17 @@ static void testCpu() {
     const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     const double load = ms / (seconds * 1000.0) * 100.0;
 
+#ifdef __SANITIZE_ADDRESS__
+    // Under the sanitizer every load is instrumented, so the budget means
+    // nothing here. The number is still printed: a sanitizer run is for memory
+    // errors, and a red CPU line on every one of them would only train
+    // everybody to ignore the run.
+    check(true, "custo de CPU nao e medido sob sanitizer",
+          fmt("%.2f%% de tempo real, instrumentado", load));
+#else
     check(load < 15.0, "full chain plus stretched track stays cheap",
           fmt("%.2f%% de tempo real (x86)", load));
+#endif
 }
 
 // --------------------------------------------------------------- autotune
@@ -1249,6 +1258,43 @@ static void testSeparator() {
             magnitudeAt(backing.data() + lo, hi - lo, 14000.0f, 44100);
         check(outHigh > inHigh * 0.9f, "a banda acima do teto da rede sobrevive",
               fmt2("%.4f de %.4f", outHigh, inHigh));
+    }
+
+    /*
+     * Two channels of different lengths.
+     *
+     * The frame count used to be one number shared by both, so analysing the
+     * left and then a longer right and synthesising the left read past the end
+     * of the left channel's spectrum. The caller happens to use equal lengths,
+     * which is exactly why this needs a test rather than a reader's trust.
+     */
+    {
+        const int shortN = kHop * 12 + kNFft;
+        const int longN = kHop * 30 + kNFft;
+        std::vector<float> left((size_t) shortN), right((size_t) longN);
+        for (int i = 0; i < shortN; ++i) {
+            left[(size_t) i] = 0.3f * std::sin(
+                2.0f * (float) M_PI * 440.0f * (float) i / 44100.0f);
+        }
+        for (int i = 0; i < longN; ++i) {
+            right[(size_t) i] = 0.3f * std::sin(
+                2.0f * (float) M_PI * 660.0f * (float) i / 44100.0f);
+        }
+
+        std::vector<float> magShort((size_t) sep.frameCount(shortN) * (size_t) kModelBins);
+        std::vector<float> magLong((size_t) sep.frameCount(longN) * (size_t) kModelBins);
+        sep.analyze(left.data(), shortN, 0, magShort.data());
+        sep.analyze(right.data(), longN, 1, magLong.data());   // the longer one last
+
+        std::vector<float> aMag(magShort);
+        std::vector<float> vMag(magShort.size(), 0.0f);
+        std::vector<float> out((size_t) shortN);
+        sep.synthesize(vMag.data(), aMag.data(), 0, shortN, nullptr, out.data());
+
+        const int lo = kNFft, hi = shortN - kNFft;
+        const float got = magnitudeAt(out.data() + lo, hi - lo, 440.0f, 44100);
+        check(got > 0.27f && got < 0.33f,
+              "um canal mais curto que o outro sai certo", fmt("%.3f", got));
     }
 
     // --- one stem at a time, for when only the backing track is wanted ---

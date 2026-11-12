@@ -107,8 +107,12 @@ class TrackDecoder(private val context: Context) {
                     while (f < frames) {
                         val chunk = minOf(MAX_FRAMES, frames - f)
                         interleaveStereo(data, (f * channels), chunk, channels, stereo)
-                        val level = guideLevel
-                        if (level > 0.001f) guide?.mixInto(stereo, chunk, level)
+                        // Always, even at zero. The guide's read position only
+                        // moves when it is asked for audio, so skipping it
+                        // while the level is down left it at the start of the
+                        // file: raising the slider a minute into a song played
+                        // the original singer from the first verse.
+                        guide?.mixInto(stereo, chunk, guideLevel)
                         pushAll(stereo, chunk)
                         f += chunk
                     }
@@ -171,7 +175,9 @@ class TrackDecoder(private val context: Context) {
         fun mixInto(stereo: FloatArray, frames: Int, level: Float) {
             fill(frames * 2)
             val take = minOf(frames * 2, held)
-            for (i in 0 until take) stereo[i] += pending[i] * level
+            if (level > 0.001f) {
+                for (i in 0 until take) stereo[i] += pending[i] * level
+            }
             if (take < held) {
                 System.arraycopy(pending, take, pending, 0, held - take)
             }

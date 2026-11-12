@@ -963,18 +963,26 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         separateProgress = 0f
 
         separateJob = viewModelScope.launch {
-            val outcome = separator.separate(
-                uri = Uri.parse(song.uri),
-                songId = song.id,
-                keepVocal = true
-            ) { phase, progress ->
-                viewModelScope.launch(Dispatchers.Main) {
-                    separatePhase = phase
-                    separateProgress = progress
+            // In a finally, because cancelling the job cancels the withContext
+            // inside separate() and the cancellation is rethrown here rather
+            // than coming back as a value. Clearing this on the normal path
+            // only meant that one tap on "cancelar" left the flag set and the
+            // feature refused every song from then on.
+            val outcome = try {
+                separator.separate(
+                    uri = Uri.parse(song.uri),
+                    songId = song.id,
+                    keepVocal = true
+                ) { phase, progress ->
+                    viewModelScope.launch(Dispatchers.Main) {
+                        separatePhase = phase
+                        separateProgress = progress
+                    }
                 }
+            } finally {
+                separating = null
+                separateProgress = 0f
             }
-            separating = null
-            separateProgress = 0f
 
             when (outcome) {
                 is VocalSeparator.Result.Done -> {

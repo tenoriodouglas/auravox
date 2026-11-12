@@ -1,4 +1,5 @@
 #include <jni.h>
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -93,8 +94,15 @@ Java_com_auravox_separation_NativeSeparator_nativeSynthesize(
     jfloat *vo = vocalOut ? env->GetFloatArrayElements(vocalOut, nullptr) : nullptr;
     jfloat *ao = accompOut ? env->GetFloatArrayElements(accompOut, nullptr) : nullptr;
 
-    const jsize length = vocalOut ? env->GetArrayLength(vocalOut)
-                                  : (accompOut ? env->GetArrayLength(accompOut) : 0);
+    // The shorter of the two, not whichever happens to be non-null first: one
+    // length is applied to both inside, and writing a vocal-sized buffer into
+    // a shorter accompaniment array would corrupt the heap past its end
+    jsize length = -1;
+    if (vocalOut) length = env->GetArrayLength(vocalOut);
+    if (accompOut) {
+        const jsize other = env->GetArrayLength(accompOut);
+        length = length < 0 ? other : std::min(length, other);
+    }
     if (length > 0) {
         gSeparator->synthesize(vm, am, channel, length, vo, ao);
     }

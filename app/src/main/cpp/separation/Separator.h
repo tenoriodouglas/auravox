@@ -82,7 +82,7 @@ public:
             std::copy(phase_.begin(), phase_.end(), pRow);
             std::copy(mRow, mRow + modelBins_, magOut + (size_t) f * (size_t) modelBins_);
         }
-        frames_ = frames;
+        framesFor(channel) = frames;
     }
 
     /**
@@ -98,6 +98,10 @@ public:
     ) {
         auto &keepMag = magFor(channel);
         auto &keepPhase = phaseFor(channel);
+        // Per channel, not shared: analysing the left and then the right with
+        // different lengths and synthesising the left would otherwise walk off
+        // the end of the left channel's spectrum
+        const int frames = framesFor(channel);
 
         std::vector<float> maskV((size_t) bins_), maskA((size_t) bins_);
         std::vector<float> rowMag((size_t) bins_);
@@ -107,7 +111,7 @@ public:
             if (!out) continue;
             stft_.beginSynthesis(length);
 
-            for (int f = 0; f < frames_; ++f) {
+            for (int f = 0; f < frames; ++f) {
                 const float *v = vocalMag + (size_t) f * (size_t) modelBins_;
                 const float *a = accompMag + (size_t) f * (size_t) modelBins_;
                 buildMasks(v, a, maskV.data(), maskA.data());
@@ -163,12 +167,13 @@ public:
 private:
     std::vector<float> &magFor(int channel) { return channel == 0 ? magL_ : magR_; }
     std::vector<float> &phaseFor(int channel) { return channel == 0 ? phaseL_ : phaseR_; }
+    int &framesFor(int channel) { return channel == 0 ? framesL_ : framesR_; }
 
     static constexpr float kFloor = 1e-12f;
     static constexpr int kTailBins = 32;
 
     Stft stft_;
-    int bins_ = 0, modelBins_ = 0, frames_ = 0;
+    int bins_ = 0, modelBins_ = 0, framesL_ = 0, framesR_ = 0;
     std::vector<float> mag_, phase_;
     std::vector<float> magL_, magR_, phaseL_, phaseR_;
 };
